@@ -1,0 +1,18 @@
+# Secrets — never commit
+.env
+
+# The wger stack is cloned by ./setup.sh, not vendored into this repo, so upstream
+# upgrades stay a plain `git pull` inside it.
+vendor/
+
+# ETL output (regenerate with etl/extract_custom_db.py)
+build/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# macOS
+.DS_Store

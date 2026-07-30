@@ -1,0 +1,185 @@
+{
+  "_comment": "Mappings from the Functional Fitness Exercise Database (v2.9) taxonomy onto wger's much smaller built-in taxonomy. Used ONLY for the mapped import into wger, so exercises are loggable in the web + mobile apps. The sidecar exercise-intelligence store keeps the original full-fidelity values. wger IDs verified against https://wger.de/api/v2/ on 2026-07-30.",
+
+  "category": {
+    "_comment": "16 target muscle groups -> 8 wger categories.",
+    "Quadriceps": 9,
+    "Glutes": 9,
+    "Hamstrings": 9,
+    "Hip Flexors": 9,
+    "Abductors": 9,
+    "Adductors": 9,
+    "Calves": 14,
+    "Shins": 14,
+    "Abdominals": 10,
+    "Back": 12,
+    "Trapezius": 12,
+    "Chest": 11,
+    "Shoulders": 13,
+    "Biceps": 8,
+    "Triceps": 8,
+    "Forearms": 8
+  },
+
+  "category_names": {
+    "8": "Arms",
+    "9": "Legs",
+    "10": "Abs",
+    "11": "Chest",
+    "12": "Back",
+    "13": "Shoulders",
+    "14": "Calves",
+    "15": "Cardio"
+  },
+
+  "muscle": {
+    "_comment": "Custom muscle names -> wger muscle IDs. wger has only 15 muscles, so several distinct muscles collapse onto one ID (noted below) and ~20 have no wger equivalent at all -> null. Nulls are expected and are NOT a data error; the sidecar retains the precise muscle.",
+
+    "Quadriceps Femoris": 10,
+    "Rectus Femoris": 10,
+    "Vastus Mediais": 10,
+
+    "Rectus Abdominis": 6,
+    "Transverse Abdominis": 6,
+
+    "Obliques": 14,
+
+    "Pectoralis Major": 4,
+    "Serratus Anterior": 3,
+
+    "Anterior Deltoids": 2,
+    "Lateral Deltoids": 2,
+    "Medial Deltoids": 2,
+    "Posterior Deltoids": 2,
+
+    "Biceps Brachii": 1,
+    "Brachialis": 13,
+    "Brachioradialis": 13,
+    "Triceps Brachii": 5,
+    "Anconeus": 5,
+
+    "Latissimus Dorsi": 12,
+    "Teres Major": 12,
+    "Teres Minor": 12,
+
+    "Upper Trapezius": 9,
+    "Trapezius": 9,
+    "Levator Scapulae": 9,
+    "Rhomboids": 9,
+
+    "Gluteus Maximus": 8,
+    "Gluteus Medius": 8,
+    "Gluteus Minimus": 8,
+
+    "Biceps Femoris": 11,
+    "Gastrocnemius": 7,
+    "Soleus": 15,
+
+    "Iliopsoas": null,
+    "Erector Spinae": null,
+    "Adductor Magnus": null,
+    "Infraspinatus": null,
+    "Subscapularis": null,
+    "Supraspinatus": null,
+    "Tibialis Anterior": null,
+    "Tibialis Posterior": null,
+    "Tensor Fasciae Latae": null,
+    "Extensor Digitorum Longus": null,
+    "Extensor Hallucis Longus": null,
+    "Flexor Carpi Radialis": null
+  },
+
+  "muscle_names": {
+    "1": "Biceps brachii",
+    "2": "Anterior deltoid",
+    "3": "Serratus anterior",
+    "4": "Pectoralis major",
+    "5": "Triceps brachii",
+    "6": "Rectus abdominis",
+    "7": "Gastrocnemius",
+    "8": "Gluteus maximus",
+    "9": "Trapezius",
+    "10": "Quadriceps femoris",
+    "11": "Biceps femoris",
+    "12": "Latissimus dorsi",
+    "13": "Brachialis",
+    "14": "Obliquus externus abdominis",
+    "15": "Soleus"
+  },
+
+  "equipment_existing": {
+    "_comment": "Custom equipment names that map onto one of wger's 12 built-in equipment rows.",
+    "Barbell": 1,
+    "EZ Bar": 2,
+    "Dumbbell": 3,
+    "Pull Up Bar": 6,
+    "Bodyweight": 7,
+    "Bench (Flat)": 8,
+    "Bench (Incline)": 9,
+    "Kettlebell": 10,
+    "Superband": 11,
+    "Resistance Band": 11,
+    "Miniband": 11,
+    "Cable": 12,
+    "Stability Ball": 5
+  },
+
+  "equipment_names": {
+    "1": "Barbell",
+    "2": "SZ-Bar",
+    "3": "Dumbbell",
+    "4": "Gym mat",
+    "5": "Swiss Ball",
+    "6": "Pull-up bar",
+    "7": "none (bodyweight exercise)",
+    "8": "Bench",
+    "9": "Incline bench",
+    "10": "Kettlebell",
+    "11": "Resistance band",
+    "12": "Cable machine"
+  },
+
+  "equipment_to_create": {
+    "_comment": "Equipment present in the custom DB with no wger equivalent. wger's /api/v2/equipment/ endpoint is GET-only, so these must be created via a Django management command / admin, not the REST API. Equipment rows are name-only (no images), so adding them is low-risk.",
+    "names": [
+      "Ab Wheel",
+      "Battle Ropes",
+      "Bench (Decline)",
+      "Bulgarian Bag",
+      "Climbing Rope",
+      "Clubbell",
+      "Gravity Boots",
+      "Gymnastic Rings",
+      "Heavy Sandbag",
+      "Indian Club",
+      "Landmine",
+      "Macebell",
+      "Medicine Ball",
+      "Parallette Bars",
+      "Plyo Box",
+      "Sandbag",
+      "Slam Ball",
+      "Slant Board",
+      "Sled",
+      "Sledge Hammer",
+      "Sliders",
+      "Suspension Trainer",
+      "Tire",
+      "Trap Bar",
+      "Wall Ball",
+      "Weight Plate"
+    ]
+  },
+
+  "difficulty_rank": {
+    "_comment": "The custom DB's 8-tier difficulty scale has no wger equivalent; it lives in the sidecar only. Ranked so the agent can filter/progress numerically.",
+    "Beginner": 1,
+    "Novice": 2,
+    "Intermediate": 3,
+    "Advanced": 4,
+    "Expert": 5,
+    "Master": 6,
+    "Grand Master": 7,
+    "Legendary": 8
+  }
+}

@@ -1,0 +1,77 @@
+# AI layer for a self-hosted wger instance.
+#
+# wger itself is NOT defined here. It runs from an unmodified clone of
+# wger-project/docker in ./vendor/wger (see ./setup.sh), so upstream upgrades are a
+# `git pull` with no merge conflicts against our changes. These services join wger's
+# network and talk to it over its REST API.
+#
+# Start order:  ./setup.sh  &&  docker compose up -d
+
+name: fitness-ai
+
+services:
+  sidecar-db:
+    image: docker.io/postgres:17-alpine
+    environment:
+      POSTGRES_DB: exercise_intel
+      POSTGRES_USER: ${SIDECAR_DB_USER:-fitness}
+      POSTGRES_PASSWORD: ${SIDECAR_DB_PASSWORD:?set SIDECAR_DB_PASSWORD in .env}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - sidecar-data:/var/lib/postgresql/data
+      - ./sidecar/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    # Exposed on the host so the ETL loader can run outside Docker during setup.
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SIDECAR_DB_USER:-fitness} -d exercise_intel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    depends_on:
+      sidecar-db:
+        condition: service_healthy
+    environment:
+      SIDECAR_DSN: postgresql://${SIDECAR_DB_USER:-fitness}:${SIDECAR_DB_PASSWORD}@sidecar-db:5432/exercise_intel
+      # `web` is the wger container's service name on wger_network.
+      WGER_BASE_URL: ${WGER_BASE_URL:-http://web:8000}
+      WGER_API_TOKEN: ${WGER_API_TOKEN:?generate one at <wger>/en/user/api-key}
+      # Any OpenAI-compatible endpoint: OmniRoute, OpenRouter, Ollama, vLLM.
+      LLM_BASE_URL: ${LLM_BASE_URL:?set LLM_BASE_URL in .env}
+      LLM_API_KEY: ${LLM_API_KEY:-local-gateway}
+      MODEL_ROUTINE: ${MODEL_ROUTINE:-anthropic/claude-sonnet-5}
+      MODEL_ROUTINE_ESCALATION: ${MODEL_ROUTINE_ESCALATION:-anthropic/claude-opus-5}
+      MODEL_VARIATION: ${MODEL_VARIATION:-anthropic/claude-sonnet-5}
+      MODEL_CRITIC: ${MODEL_CRITIC:-anthropic/claude-sonnet-5}
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${AGENT_PORT:-8100}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - default
+      - wger
+
+volumes:
+  sidecar-data:
+
+networks:
+  default:
+    name: fitness_ai_network
+  # Created by wger's own compose file; we attach rather than define it, so wger
+  # keeps full ownership of its stack.
+  wger:
+    name: wger_network
+    external: true

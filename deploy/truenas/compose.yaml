@@ -1,0 +1,149 @@
+# TrueNAS SCALE custom app — full stack in ONE app.
+#
+# Paste this into: Apps -> Discover Apps -> Custom App -> Install via YAML.
+#
+# WHY ONE APP: each TrueNAS custom app is its own Compose project with its own
+# network. Running wger and the AI layer as two apps would mean cross-project
+# networking. `include:` (supported as a top-level key in TrueNAS custom apps) pulls
+# wger's own compose file in, so everything lands in a single project on a single
+# network and resolves by service name — while wger's file stays UNMODIFIED and
+# upgradeable with `git pull`.
+#
+# BEFORE INSTALLING, on the TrueNAS host:
+#
+#   1. Create datasets (Storage -> pool -> Add Dataset):
+#        <pool>/apps/fitness/wger-postgres      <- irreplaceable: snapshot aggressively
+#        <pool>/apps/fitness/wger-media         <- exercise images
+#        <pool>/apps/fitness/wger-static
+#        <pool>/apps/fitness/sidecar-postgres   <- rebuildable from the spreadsheet
+#        <pool>/apps/fitness/repo
+#
+#      Snapshot policy is worth differentiating: the wger database is the only
+#      irreplaceable data here. The sidecar rebuilds from the .xlsx plus wger's API in
+#      about a minute, so it does not need deep retention.
+#
+#   2. Clone both repos into the repo dataset:
+#        cd /mnt/<pool>/apps/fitness/repo
+#        git clone https://github.com/wger-project/docker.git wger
+#        git clone <this-repo> ai-fitness
+#
+#   3. Set ownership so the containers can write (wger's images run as UID/GID 1000;
+#      postgres runs as 999). Getting this wrong is the #1 cause of a stack that
+#      starts and then dies on a permissions error:
+#        chown -R 1000:1000 /mnt/<pool>/apps/fitness/wger-media \
+#                           /mnt/<pool>/apps/fitness/wger-static
+#        chown -R 999:999   /mnt/<pool>/apps/fitness/wger-postgres \
+#                           /mnt/<pool>/apps/fitness/sidecar-postgres
+#
+#   4. Edit /mnt/<pool>/apps/fitness/repo/wger/config/prod.env and set:
+#        SECRET_KEY=<50 random chars>
+#        SITE_URL=http://<truenas-ip>:8080
+#        CSRF_TRUSTED_ORIGINS=http://<truenas-ip>:8080
+#        TIME_ZONE / TZ to your zone
+#      SITE_URL and CSRF_TRUSTED_ORIGINS must match how you actually reach it, or
+#      every form submission fails with a CSRF error.
+#
+#   5. Replace every <pool> below, and fill in the environment values marked CHANGEME.
+#
+# PORTS: TrueNAS SCALE's own web UI listens on 80 and 443. wger's nginx defaults to
+# 80, which collides. This file remaps it to 8080 rather than moving the NAS UI —
+# moving the NAS UI risks locking yourself out of the box.
+
+name: fitness
+
+include:
+  # wger's own compose, untouched. Path is inside the TrueNAS host filesystem.
+  - path: /mnt/<pool>/apps/fitness/repo/wger/docker-compose.yml
+
+services:
+  # --------------------------------------------------------------------------
+  # Overrides against the included wger stack.
+  #
+  # The `!override` tag replaces the included value instead of merging with it.
+  # Without it Compose APPENDS to the ports list, so "80:80" would survive and the
+  # app would fail to start against the TrueNAS UI. Requires Compose v2.24+ (any
+  # TrueNAS SCALE 24.10 or later is well past that).
+  # --------------------------------------------------------------------------
+  nginx:
+    ports: !override
+      - "8080:80"
+
+  # Point wger's Postgres at a ZFS dataset so the database is covered by snapshots
+  # and replication rather than living in an opaque Docker volume.
+  db:
+    volumes: !override
+      - /mnt/<pool>/apps/fitness/wger-postgres:/var/lib/postgresql/data
+
+  web:
+    volumes: !override
+      - /mnt/<pool>/apps/fitness/wger-static:/home/wger/static
+      - /mnt/<pool>/apps/fitness/wger-media:/home/wger/media
+
+  # --------------------------------------------------------------------------
+  # AI layer
+  # --------------------------------------------------------------------------
+  sidecar-db:
+    image: docker.io/postgres:17-alpine
+    environment:
+      POSTGRES_DB: exercise_intel
+      POSTGRES_USER: fitness
+      POSTGRES_PASSWORD: CHANGEME_sidecar_password
+      TZ: UTC
+    volumes:
+      - /mnt/<pool>/apps/fitness/sidecar-postgres:/var/lib/postgresql/data
+      # Applied only on first init, when the data directory is empty.
+      - /mnt/<pool>/apps/fitness/repo/ai-fitness/sidecar/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitness -d exercise_intel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: /mnt/<pool>/apps/fitness/repo/ai-fitness
+      dockerfile: agent/Dockerfile
+    depends_on:
+      sidecar-db:
+        condition: service_healthy
+    environment:
+      SIDECAR_DSN: postgresql://fitness:CHANGEME_sidecar_password@sidecar-db:5432/exercise_intel
+      # Same Compose project, so wger's `web` service resolves directly.
+      WGER_BASE_URL: http://web:8000
+      # Create at http://<truenas-ip>:8080/en/user/api-key after registering.
+      WGER_API_TOKEN: CHANGEME_wger_token
+
+      # Your existing OmniRoute instance. Addressed by the NAS's LAN IP, NOT by
+      # service name: OmniRoute runs as its own TrueNAS app, which means its own Compose
+      # project and its own Docker network, so `http://omniroute:20128` does not resolve
+      # from here. Any OpenAI-compatible endpoint works — swap for
+      # https://openrouter.ai/api/v1 or http://<host>:11434/v1 with no code changes.
+      LLM_BASE_URL: http://<nas-ip>:20128/v1
+      # OmniRoute holds the real provider keys itself; a placeholder satisfies the
+      # OpenAI SDK, which insists on a non-empty api_key.
+      LLM_API_KEY: local-gateway
+
+      # Model ids must match what YOUR gateway advertises — check
+      # GET /capabilities on the agent, or the OmniRoute dashboard. Do not assume
+      # OpenRouter's provider/model naming carries over.
+      MODEL_ROUTINE: anthropic/claude-sonnet-5
+      MODEL_ROUTINE_ESCALATION: anthropic/claude-opus-5
+      MODEL_VARIATION: anthropic/claude-sonnet-5
+      MODEL_CRITIC: anthropic/claude-sonnet-5
+      TZ: UTC
+    volumes:
+      # The repo is mounted read-write so the ETL can read the .xlsx and write its
+      # output to build/, and so an edited mapping file takes effect without an image
+      # rebuild. See deploy/truenas/SETUP.md step 7.
+      - /mnt/<pool>/apps/fitness/repo/ai-fitness:/repo
+    ports:
+      - "8100:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped

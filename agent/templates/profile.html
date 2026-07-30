@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trainee profile</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+  <header class="page-head">
+    <h1>Trainee profile</h1>
+    <p class="sub">
+      Read before every routine is generated. The more of this that is filled in, the
+      less generic the programming.
+    </p>
+  </header>
+
+  {% if saved %}
+    <div class="banner ok">Profile saved.</div>
+  {% endif %}
+
+  {% if not complete %}
+    <div class="banner warn">
+      <strong>Routines will be generic until these are set:</strong>
+      <ul>{% for item in missing %}<li>{{ item }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  <form method="post" action="/profile">
+    <input type="hidden" name="profile_id" value="{{ profile.id or '' }}">
+
+    <!-- ================= goals ================= -->
+    <fieldset>
+      <legend>Training goals</legend>
+      <p class="hint">
+        Tick everything that applies and set a priority. <strong>1 = the main driver</strong>
+        of programming decisions. Priorities matter: goals can conflict, and the
+        generator resolves them by weight rather than averaging them into mush.
+      </p>
+      <div class="goal-grid">
+        {% for key, label in goals %}
+          <div class="goal-row">
+            <label class="check">
+              <input type="checkbox" name="goal_{{ key }}" value="1"
+                     {% if key in selected_goals %}checked{% endif %}>
+              <span>{{ label }}</span>
+            </label>
+            <select name="priority_{{ key }}" aria-label="{{ label }} priority">
+              {% for p in [1, 2, 3, 4, 5] %}
+                <option value="{{ p }}"
+                  {% if selected_goals.get(key, 2) == p %}selected{% endif %}>
+                  priority {{ p }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+        {% endfor %}
+      </div>
+      <p class="hint note">
+        Combining fat loss with strength or muscle growth is fine and common. The
+        generator will hold training intensity steady and let energy balance do the fat
+        loss, rather than cutting load and adding high-rep filler.
+      </p>
+    </fieldset>
+
+    <!-- ================= about you ================= -->
+    <fieldset>
+      <legend>About you</legend>
+      <div class="grid">
+        <label>
+          Name <span class="opt">optional</span>
+          <input type="text" name="display_name" value="{{ profile.display_name or '' }}">
+        </label>
+        <label>
+          Birth year
+          <input type="number" name="birth_year" min="1920" max="2020"
+                 value="{{ profile.birth_year or '' }}"
+                 placeholder="e.g. 1990">
+          <span class="hint">Sets the recovery-based ceiling on weekly volume.</span>
+        </label>
+        <label>
+          Gender <span class="opt">optional</span>
+          <input type="text" name="gender" list="gender-options"
+                 value="{{ profile.gender or '' }}">
+          <datalist id="gender-options">
+            <option value="male"><option value="female"><option value="non-binary">
+          </datalist>
+          <span class="hint">Used only for light programming context. Leave blank to skip.</span>
+        </label>
+        <label>
+          Bodyweight (kg) <span class="opt">optional</span>
+          <input type="number" name="bodyweight_kg" step="0.1" min="20" max="300"
+                 value="{{ profile.bodyweight_kg or '' }}">
+        </label>
+        <label>
+          Height (cm) <span class="opt">optional</span>
+          <input type="number" name="height_cm" min="100" max="250"
+                 value="{{ profile.height_cm or '' }}">
+        </label>
+      </div>
+    </fieldset>
+
+    <!-- ================= experience ================= -->
+    <fieldset>
+      <legend>Experience</legend>
+      <label class="stack">
+        Training experience
+        <select name="experience_level">
+          {% for key, label in experience_levels %}
+            <option value="{{ key }}"
+              {% if profile.experience_level == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <span class="hint">
+          Selects the progression model — linear for novice, double progression for
+          intermediate, autoregulated for advanced. Overstating this is the fastest way
+          to get a program you can't recover from.
+        </span>
+      </label>
+      <label class="stack">
+        Months of consistent training <span class="opt">optional</span>
+        <input type="number" name="training_age_months" min="0" max="600"
+               value="{{ profile.training_age_months or '' }}">
+      </label>
+    </fieldset>
+
+    <!-- ================= schedule ================= -->
+    <fieldset>
+      <legend>Schedule</legend>
+      <p class="hint">
+        Be honest rather than aspirational — a routine that doesn't fit the week doesn't
+        get done, and the validator rejects routines that overrun this.
+      </p>
+      <div class="grid">
+        <label>
+          Sessions per week
+          <input type="number" name="sessions_per_week" min="1" max="7" required
+                 value="{{ profile.sessions_per_week }}">
+        </label>
+        <label>
+          Minutes per session
+          <input type="number" name="minutes_per_session" min="15" max="240" required
+                 value="{{ profile.minutes_per_session }}">
+        </label>
+      </div>
+    </fieldset>
+
+    <!-- ================= equipment ================= -->
+    <fieldset>
+      <legend>Available equipment</legend>
+      <p class="hint">
+        Tick what you can actually use. Anything unticked is excluded outright, so a
+        routine can never prescribe a sled you don't own.
+        <button type="button" class="linkish" data-toggle-all="equipment">select all / none</button>
+      </p>
+      <div class="checkbox-cloud" data-group="equipment">
+        {% for item in vocab.equipment %}
+          <label class="chip">
+            <input type="checkbox" name="available_equipment" value="{{ item }}"
+              {% if item in profile.available_equipment %}checked{% endif %}>
+            <span>{{ item }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      {% if not vocab.equipment %}
+        <p class="banner warn">
+          No equipment values found — the exercise database has not been loaded yet.
+          Run the ETL and <code>sidecar/load.py</code> first.
+        </p>
+      {% endif %}
+    </fieldset>
+
+    <!-- ================= injuries / avoid ================= -->
+    <fieldset>
+      <legend>Injuries &amp; movements to avoid</legend>
+      <p class="hint">
+        These are enforced as a <strong>hard block</strong>: any routine containing a
+        match is rejected before it reaches wger. Pick the narrowest restriction that
+        covers the problem — blocking a whole body region removes a lot of useful work.
+      </p>
+      <p class="hint note">
+        This records restrictions you decide on. It does not assess or diagnose
+        anything — if you're unsure whether something is safe, ask a physio, not this form.
+      </p>
+
+      <table class="ci-table">
+        <thead>
+          <tr><th>Restrict by</th><th>Value</th><th>Reason <span class="opt">optional</span></th>
+              <th>Expires <span class="opt">optional</span></th><th></th></tr>
+        </thead>
+        <tbody id="ci-rows">
+          {#- Existing restrictions, then always one blank row. The blank row means the
+              form works without JavaScript, and gives the "+ Add" button a populated
+              <select> to clone. Blank rows are discarded server-side. -#}
+          {% for item in profile.contraindications + [none] %}
+            <tr>
+              <td>
+                <select name="ci_kind">
+                  <option value="">—</option>
+                  {% for kind in contraindication_kinds %}
+                    <option value="{{ kind }}"
+                      {% if item and item.kind == kind %}selected{% endif %}>
+                      {{ kind.replace('_', ' ') }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td><input type="text" name="ci_value" list="ci-values"
+                         value="{{ item.value if item else '' }}"></td>
+              <td><input type="text" name="ci_reason"
+                         value="{{ (item.reason or '') if item else '' }}"
+                         placeholder="e.g. shoulder impingement"></td>
+              {#- expires_on is already normalized to an ISO string by profile_repo. -#}
+              <td><input type="date" name="ci_expires"
+                         value="{{ (item.expires_on or '') if item else '' }}"></td>
+              <td><button type="button" class="remove-row" aria-label="Remove">×</button></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <!-- One datalist covering every restrictable value, so the field autocompletes
+           whichever "restrict by" kind is chosen. Sourced from the exercise database,
+           so a typo that would match nothing is easy to notice. -->
+      <datalist id="ci-values">
+        {% for group in ['movement_pattern', 'equipment', 'posture', 'body_region',
+                         'plane_of_motion', 'classification'] %}
+          {% for value in vocab.get(group, []) %}<option value="{{ value }}">{% endfor %}
+        {% endfor %}
+        {% for n in [1,2,3,4,5,6,7,8] %}<option value="{{ n }}">{% endfor %}
+      </datalist>
+
+      <button type="button" id="add-ci" class="secondary">+ Add a restriction</button>
+
+      <details class="help">
+        <summary>What each restriction type does</summary>
+        <dl>
+          <dt>movement pattern</dt>
+          <dd>Blocks a pattern everywhere, e.g. <code>Vertical Push</code> for a cranky
+              shoulder. Usually the best choice for a joint problem.</dd>
+          <dt>exercise</dt>
+          <dd>Blocks one specific exercise by its database id.</dd>
+          <dt>equipment</dt>
+          <dd>Blocks everything requiring that implement.</dd>
+          <dt>posture</dt>
+          <dd>e.g. <code>Hanging</code> if grip or shoulder hanging is a problem.</dd>
+          <dt>body region</dt>
+          <dd>Very broad — <code>Lower Body</code> removes most of a program.</dd>
+          <dt>plane of motion</dt>
+          <dd>e.g. <code>Transverse Plane</code> to avoid loaded rotation after a back injury.</dd>
+          <dt>classification</dt>
+          <dd>e.g. <code>Plyometric</code> when impact is contraindicated.</dd>
+          <dt>max difficulty</dt>
+          <dd>A ceiling from 1 (Beginner) to 8 (Legendary). Value is the number.</dd>
+        </dl>
+      </details>
+    </fieldset>
+
+    <!-- ================= preferences ================= -->
+    <fieldset>
+      <legend>Preferences &amp; notes</legend>
+      <label class="stack">
+        Exercises or styles you'd rather not do
+        <textarea name="dislikes" rows="2"
+                  placeholder="Burpees, anything on a treadmill">{{ profile.dislikes | join(', ') }}</textarea>
+        <span class="hint">
+          A preference, not a safety rule — the generator avoids these where it can but
+          won't fail a routine over them.
+        </span>
+      </label>
+      <label class="stack">
+        Anything else the coach should know
+        <textarea name="notes" rows="4"
+                  placeholder="Training history, competition dates, recurring niggles, equipment quirks">{{ profile.notes or '' }}</textarea>
+      </label>
+    </fieldset>
+
+    <div class="actions">
+      <button type="submit">Save profile</button>
+      <a class="linkish" href="/api/profile" target="_blank">view as JSON</a>
+    </div>
+  </form>
+</main>
+<script src="/static/profile.js"></script>
+</body>
+</html>

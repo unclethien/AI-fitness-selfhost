@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exercise variation review</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+  <header class="page-head">
+    <h1>Exercise variation review</h1>
+    <p class="sub">
+      AI-generated exercise variations waiting on your decision. Nothing here exists as a
+      real exercise, and none can appear in a routine, until you approve it.
+    </p>
+  </header>
+
+  {% if flash %}<div class="banner ok">{{ flash }}</div>{% endif %}
+
+  <div class="banner warn">
+    <strong>Read the movement before approving.</strong> These are produced by
+    recombining equipment, posture, grip and movement pattern, which can generate
+    movements that are awkward, pointless or unsafe. You are the safety check — if you
+    can't picture performing it, reject it.
+  </div>
+
+  <nav class="tabs">
+    {% for key, label in [('pending', 'Pending'), ('approved', 'Approved'), ('rejected', 'Rejected')] %}
+      <a href="/variations?status={{ key }}"
+         class="tab {% if status == key %}active{% endif %}">
+        {{ label }} <span class="badge">{{ counts.get(key, 0) }}</span>
+      </a>
+    {% endfor %}
+  </nav>
+
+  {% if not variations %}
+    <p class="empty">
+      {% if status == 'pending' %}
+        Nothing waiting for review. Variations appear here when you ask the coach for new
+        or novel exercise ideas.
+      {% else %}
+        No {{ status }} variations.
+      {% endif %}
+    </p>
+  {% endif %}
+
+  {% for item in variations %}
+    <article class="variation">
+      <header>
+        <h2>{{ item.name }}</h2>
+        <span class="meta">
+          {{ item.created_at[:10] if item.created_at else '' }} · {{ item.model }}
+        </span>
+      </header>
+
+      <div class="vdesc">{{ item.description }}</div>
+
+      {% if item.rationale %}
+        <p class="rationale"><strong>Why:</strong> {{ item.rationale }}</p>
+      {% endif %}
+
+      {% if item.derived_from_names %}
+        <p class="hint">
+          Derived from: {{ item.derived_from_names | join(', ') }}
+        </p>
+      {% endif %}
+
+      {# The attributes are what determine whether the programming rules and searches
+         can ever see this exercise, so they are shown in full rather than summarized. #}
+      <details class="help">
+        <summary>Attributes</summary>
+        <dl class="attrs">
+          {% for key, value in item.attributes.items() %}
+            {% if value not in (none, '', []) %}
+              <dt>{{ key.replace('_', ' ') }}</dt>
+              <dd>{{ value | join(', ') if value is sequence and value is not string else value }}</dd>
+            {% endif %}
+          {% endfor %}
+        </dl>
+      </details>
+
+      {% if item.status == 'pending' %}
+        <form method="post" action="/variations/{{ item.id }}/decide" class="decide">
+          <input type="text" name="note" placeholder="Note (optional)" maxlength="500">
+          <button type="submit" name="decision" value="approve" class="approve">Approve</button>
+          <button type="submit" name="decision" value="reject" class="reject">Reject</button>
+        </form>
+      {% else %}
+        <p class="verdict {{ item.status }}">
+          {{ item.status | capitalize }}
+          {% if item.reviewed_at %}on {{ item.reviewed_at[:10] }}{% endif %}
+          {% if item.reviewer_note %}— “{{ item.reviewer_note }}”{% endif %}
+        </p>
+        {% if item.status == 'approved' %}
+          <p class="hint">
+            {% if item.wger_exercise_id %}
+              Loggable in the training app (exercise #{{ item.wger_exercise_id }}).
+            {% else %}
+              Approved but <strong>not yet loggable</strong> — run the wger import to
+              create it in the training app.
+            {% endif %}
+          </p>
+        {% endif %}
+      {% endif %}
+    </article>
+  {% endfor %}
+
+  <p class="actions">
+    <a class="linkish" href="/profile">← trainee profile</a>
+  </p>
+</main>
+</body>
+</html>

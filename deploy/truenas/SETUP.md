@@ -92,7 +92,7 @@ Then make the bind-mounted config files world-readable:
 chmod o+r  repo/wger/config/redis.conf \
            repo/wger/config/nginx.conf \
            repo/ai-fitness/sidecar/schema.sql
-chmod -R o+rX repo/wger/config-powersync
+chmod -R o+rX repo/wger/services/config-powersync
 ```
 
 This second part is easy to skip and fails confusingly. TrueNAS datasets inherit an ACL
@@ -103,7 +103,7 @@ that creates every new file `770` — even files git would normally write as `64
 |------|---------|---------------|
 | `config/redis.conf` | `redis`, UID 999 | `redis-server` exits immediately; Compose reports `cache-1 is unhealthy` and the whole stack refuses to come up |
 | `sidecar/schema.sql` | `postgres`, UID 999 | Schema never loads; every agent query fails on a missing table |
-| `config-powersync/` | powersync's own user | powersync restart-loops |
+| `services/config-powersync/` | powersync's own user | powersync restart-loops |
 
 Ownership alone is not enough here: these run as 999, not 1000, so being owned by
 `1000:1000` does not help them. wger's own compose file says as much — *"they should be

@@ -228,7 +228,7 @@ done
 
 # Same mechanism, but the reading UID depends on the image, so advise rather than block.
 advisory_unreadable=()
-for path in "$WGER_REPO/config/nginx.conf" "$WGER_REPO/config-powersync"; do
+for path in "$WGER_REPO/config/nginx.conf" "$WGER_REPO/services/config-powersync"; do
   [ -e "$path" ] || continue
   other_can_read "$path" || advisory_unreadable+=("$path")
 done

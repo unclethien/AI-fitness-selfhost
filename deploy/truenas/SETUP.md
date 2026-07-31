@@ -99,7 +99,7 @@ Then make the bind-mounted config files world-readable:
 chmod o+r  repo/wger/config/redis.conf \
            repo/wger/config/nginx.conf \
            repo/ai-fitness/sidecar/schema.sql
-chmod -R o+rX repo/wger/services/config-powersync
+chmod -R o+rX repo/wger/services/config-powersync wger-static wger-media
 ```
 
 This second part is easy to skip and fails confusingly. TrueNAS datasets inherit an ACL
@@ -111,6 +111,7 @@ that creates every new file `770` — even files git would normally write as `64
 | `config/redis.conf` | `redis`, UID 999 | `redis-server` exits immediately; Compose reports `cache-1 is unhealthy` and the whole stack refuses to come up |
 | `sidecar/schema.sql` | `postgres`, UID 999 | Schema never loads — and `sidecar-db` still reports **healthy**, because the cluster is created before the init scripts run. Recovering needs the data directory emptied, not just a restart. |
 | `services/config-powersync/` | powersync's own user | powersync restart-loops |
+| `wger-static/`, `wger-media/` | nginx **workers**, UID 101 | Every asset 403s and wger renders unstyled. The sneaky one: `collectstatic` writes files `644`, so they look fine, but the directories inherit `770` and nginx cannot traverse into them |
 
 Ownership alone is not enough here: these run as 999, not 1000, so being owned by
 `1000:1000` does not help them. wger's own compose file says as much — *"they should be
@@ -121,8 +122,9 @@ readable by everyone."*
 database password, and it is consumed through `env_file:`, which the Docker daemon reads
 as root — no container user ever needs it.
 
-A `git pull` in `repo/wger` recreates files under the same inherited ACL, so re-run the
-`chmod` after upgrading wger. `prepare.sh` checks this and prints the exact commands.
+A `git pull` in `repo/wger` recreates files under the same inherited ACL, and a wger
+upgrade re-runs `collectstatic` into `wger-static`, so re-run the `chmod` after either.
+`prepare.sh` checks all of this and prints the exact commands.
 
 ---
 
@@ -529,7 +531,8 @@ docker exec -i ix-fitness-web-1 python3 manage.py shell < wger_import/import_exe
 | `Invalid YAML provided` on install | You pasted `compose.yaml` instead of `compose.generated.yaml`. The template contains Compose's `!override` tag, which TrueNAS's YAML parser rejects. Run `prepare.sh` and paste its output. |
 | App won't start, port conflict | nginx still on 80. Regenerate with `prepare.sh`; it asserts nginx is not on 80 before succeeding. |
 | Containers die on missing env file | A relative path survived flattening. Regenerate with `prepare.sh` rather than hand-editing. |
-| Static assets and exercise images 404 | nginx serving an empty named volume. Regenerate — the generator redirects `static`/`media` on every service that mounts them. |
+| wger renders unstyled; `/static/...` returns **403** | `wger-static`'s directories are `770` and nginx workers run as UID 101, so they cannot traverse in — the files themselves are `644` and look fine. `chmod -R o+rX` it (step 4). Then **hard-refresh**: wger's nginx config sets `Cache-Control: immutable, max-age=31536000` with `always`, so the browser cached those 403s for a year. |
+| Static assets and exercise images **404** | nginx serving an empty named volume, or `collectstatic` never ran into the bind mount. Regenerate with `prepare.sh` — it redirects `static`/`media` on every service that mounts them — then `manage.py collectstatic --noinput`. |
 | `/health` says `degraded` | Agent can't reach `sidecar-db`; check the password matches in both places. |
 | `capabilities` shows tools dropped | That OmniRoute upstream provider doesn't support native tool calling. Switch to one listed as `native`. |
 | Agent can't reach OmniRoute | Must be the NAS IP, not `http://omniroute:20128` — separate app, separate Docker network. Check OmniRoute's port is published on `0.0.0.0`. |

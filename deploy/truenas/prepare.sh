@@ -219,9 +219,16 @@ other_can_read() {
   return 0
 }
 
-# Confirmed to break the stack: both are read by a process running as UID 999.
+# Confirmed to break the stack, each observed on a real deployment:
+#   redis.conf, schema.sql   read by a process running as UID 999
+#   wger-static, wger-media  served by nginx workers running as UID 101
+#
+# The static case is the least obvious: collectstatic writes files 644, so they look
+# fine, but the directories inherit the dataset's 770 and nginx cannot traverse into
+# them. Every asset then 403s and the site renders unstyled.
 blocking_unreadable=()
-for path in "$WGER_REPO/config/redis.conf" "$AI_REPO/sidecar/schema.sql"; do
+for path in "$WGER_REPO/config/redis.conf" "$AI_REPO/sidecar/schema.sql" \
+            "$BASE_PATH/wger-static" "$BASE_PATH/wger-media"; do
   [ -e "$path" ] || continue
   other_can_read "$path" || blocking_unreadable+=("$path")
 done
@@ -239,8 +246,14 @@ if [ "${#blocking_unreadable[@]}" -gt 0 ]; then
     printf '    %s  (mode %s)\n' "$path" \
       "$(stat -c '%a' "$path" 2>/dev/null || stat -f '%Lp' "$path" 2>/dev/null)"
   done
-  printf '\n  Fix, then re-run:\n    chmod o+r%s' \
-    "$(printf ' %s' "${blocking_unreadable[@]}")"
+  printf '\n  Fix, then re-run:\n'
+  for path in "${blocking_unreadable[@]}"; do
+    if [ -d "$path" ]; then
+      printf '    chmod -R o+rX %s\n' "$path"
+    else
+      printf '    chmod o+r %s\n' "$path"
+    fi
+  done
   printf '\n\n  Do NOT chmod the whole config directory: prod.env holds SECRET_KEY and the\n'
   printf '  database password, and only the root Docker daemon reads it.\n\n'
   problems=$((problems + 1))

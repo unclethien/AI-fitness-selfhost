@@ -1,6 +1,7 @@
 # Self-hosted wger + AI exercise agent
 
-**Status:** Phase 1 complete and verified. Phase 2 code complete but **unverified against
+**Status:** All phases code complete. Phases 1-6b written; the TrueNAS stack itself
+now runs (steps 0-6 of the runbook executed 2026-07-30). Phase 2 remains **unverified against
 a live database** — Docker is not installed on this machine, so nothing has actually been
 run against Postgres. `sidecar/schema.sql` was validated against the real Postgres 17
 grammar via `pglast` (30 statements parse), which catches syntax but not semantics.
@@ -456,10 +457,42 @@ profile because it cloned options from a row that didn't exist; and date normali
 was happening in the template instead of the repository, so it broke on whichever of
 `date`/`str` it didn't expect.
 
-### Phase 6b — Web chat UI
+### Phase 6b — Web chat UI ✅ (code complete, tested)
 
-Server-rendered chat with SSE token streaming, routine preview before commit, and the
-variation review queue. No SPA build step.
+Server-rendered chat at `/chat`, no build step. 46 tests in `agent/test_chat.py`;
+257 across the whole suite.
+
+- `agent/chat_repo.py` — sessions and messages in OpenAI wire format, `tool_calls` and
+  `tool_call_id` preserved verbatim so a conversation replays exactly as it happened.
+- `agent/chat.py` — the conversational loop.
+- `agent/templates/chat.html`, `agent/static/chat.js`, chat styles in `app.css`.
+- Routes in `main.py`; `/` now lands on `/chat` rather than `/profile`.
+
+**The design decision.** The chat does not reimplement routine generation. It gets the
+generator's read tools plus one extra tool, `generate_routine`, which invokes the tested
+pipeline in `generate.py` and streams its progress into the transcript.
+`submit_routine_plan` is deliberately withheld — exposing both would give the model two
+ways to produce a routine, only one of them validated. This makes "is this actually a
+request for a program?" a judgement the model makes in context: a UI mode switch would
+force that decision before the question is asked, and a classifier call would add a round
+trip and a failure mode to every message.
+
+**Two deviations from the sketch, both deliberate:**
+
+1. **NDJSON over a streamed POST, not SSE.** `EventSource` is GET-only, so SSE would mean
+   stashing the message server-side and fetching it back. `fetch` with a streamed body
+   reads it directly. `X-Accel-Buffering: no` is set so it still works if ever proxied
+   through nginx.
+2. **Event streaming, not token streaming.** Progress arrives live — each search, each
+   validation result, the critic verdict — but the prose reply arrives whole.
+   `llm.run_tools` is not streaming-capable, and adding that to the module every other
+   surface depends on is a real risk for a perceived-latency gain. The part that actually
+   takes tens of seconds is the pipeline, and that *is* streamed. Worth revisiting once
+   the stack has run against a real model.
+
+**Known gap:** the transcript renders as plain text with `white-space: pre-wrap`, and the
+system prompt tells the model not to emit markdown. If it emits it anyway, you see the
+asterisks. A renderer is a later call, not a silent `innerHTML`.
 
 ## Open questions
 

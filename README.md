@@ -60,16 +60,27 @@ running the extraction.
 | `sidecar/schema.sql` | Exercise intelligence store: exercises, staged variations, chat, generated routines |
 | `sidecar/describe.py` | Deterministic Markdown descriptions built from attributes (no LLM) |
 | `sidecar/load.py` | Idempotent upsert of both exercise sources into the sidecar |
+| `coaching/principles.py` | Volume landmarks, rep/RIR/rest ranges, progression models — sourced and cited |
+| `coaching/validate.py` | Deterministic programming checks; 11 check families, error/warning/info |
+| `agent/chat.py` | Conversational coach loop; routes program requests into the generator |
+| `agent/generate.py` | draft → validate → critic → revise → write pipeline |
+| `agent/tools.py` | The tools the model may call. No routine-write tool: only the validated writer writes |
+| `agent/wger_client.py` | Routine writer, with rollback on partial failure |
+| `wger_import/import_exercises.py` | Piped into wger's `manage.py shell`; wger itself stays unmodified |
+| `deploy/truenas/` | TrueNAS SCALE compose generator and a step-by-step runbook |
 | `plans/` | Design decisions, phase status, and open questions |
 | `build/` | ETL output (gitignored; regenerate any time) |
 
 ## Extraction results
 
-3,242 exercises, 2,013 demonstration videos, 950 explainer videos. 2,151 records clean;
-1,091 carry at least one QC flag. Full breakdown in `build/qc_report.md` after running
-the ETL — the headline items are 602 exercises with an `Unsorted*` classification, 364
-with an `Unsorted*` force type, and 192 whose "Load Position" is the literal value
-`Order`.
+3,242 exercises, 2,013 demonstration videos, 950 explainer videos. 2,328 records clean;
+914 carry at least one QC flag. Full breakdown in `build/qc_report.md` after running the
+ETL — the headline items are 602 exercises with an `Unsorted*` classification and 364
+with an `Unsorted*` force type.
+
+The 192 rows whose "Load Position" reads `Order` are **not** flagged: that is a real
+clubbell position, from the drill command "order arms", confirmed by the database's
+author. Treating it as dirty data would have discarded 192 legitimate exercises.
 
 Descriptions are generated deterministically from each exercise's own attributes rather
 than by an LLM: the source database has no prose at all, and wger requires at least 40

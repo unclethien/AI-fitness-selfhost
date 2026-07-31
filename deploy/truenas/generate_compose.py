@@ -326,6 +326,9 @@ def build_compose(
             # so it is addressed by host IP rather than service name.
             "LLM_BASE_URL": f"http://{nas_ip}:{gateway_port}/v1",
             "LLM_API_KEY": "local-gateway",
+            # Chat is the highest-frequency call and the cheapest to get wrong, so it
+            # is configurable separately from routine drafting.
+            "MODEL_CHAT": "anthropic/claude-sonnet-5",
             "MODEL_ROUTINE": "anthropic/claude-sonnet-5",
             "MODEL_ROUTINE_ESCALATION": "anthropic/claude-opus-5",
             "MODEL_VARIATION": "anthropic/claude-sonnet-5",

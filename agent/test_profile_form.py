@@ -129,8 +129,12 @@ check("no unrendered jinja left", "{{" not in html and "{%" not in html)
 check("safety disclaimer present", "does not assess or diagnose" in html)
 
 print("\n=== root redirects")
+# Chat became the landing page when the chat surface shipped; the profile form is
+# reached from its sidebar.
 r = client.get("/", follow_redirects=False)
-check("/ redirects to /profile", r.status_code in (307, 302) and "/profile" in r.headers["location"])
+check("/ redirects to /chat",
+      r.status_code in (307, 302) and "/chat" in r.headers["location"],
+      f"got {r.status_code} -> {r.headers.get('location')}")
 
 print("\n=== submit the form")
 form = {

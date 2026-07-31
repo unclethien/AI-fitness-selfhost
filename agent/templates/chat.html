@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coach — {{ session.title or 'New conversation' }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="chat-body">
+<main class="chat-layout">
+
+  <aside class="sessions">
+    <form method="post" action="/chat/new">
+      <button type="submit" class="new-chat">New conversation</button>
+    </form>
+
+    <nav class="session-list">
+      {% for item in sessions %}
+        <a href="/chat/{{ item.id }}"
+           class="session {% if item.id == session.id %}active{% endif %}">
+          <span class="session-title">{{ item.title or 'New conversation' }}</span>
+          <span class="session-meta">
+            {{ item.updated_at[:10] if item.updated_at else '' }}
+            {%- if item.turns %} · {{ item.turns }} messages{% endif %}
+          </span>
+        </a>
+      {% endfor %}
+    </nav>
+
+    <div class="side-links">
+      <a class="linkish" href="/profile">Trainee profile</a>
+      <a class="linkish" href="/variations">Variation review</a>
+      <a class="linkish" href="/capabilities">Gateway check</a>
+    </div>
+  </aside>
+
+  <section class="conversation" data-session-id="{{ session.id }}">
+    <header class="chat-head">
+      <h1>{{ session.title or 'New conversation' }}</h1>
+      {% if sessions | length > 1 or messages %}
+        <form method="post" action="/chat/{{ session.id }}/delete"
+              onsubmit="return confirm('Delete this conversation? The routines it created stay in the training app.')">
+          <button type="submit" class="delete-chat" title="Delete conversation">Delete</button>
+        </form>
+      {% endif %}
+    </header>
+
+    {# Advice quality is bounded by what the coach knows. Better to say so than to let
+       the output quietly be generic. #}
+    {% if not has_profile %}
+      <div class="banner warn">
+        <strong>No trainee profile yet.</strong> Until you fill one in, the coach has no
+        age, injuries, equipment or schedule to work from and can only give generic
+        advice. <a href="/profile">Fill in your profile →</a>
+      </div>
+    {% elif not profile_complete %}
+      <div class="banner warn">
+        Your profile is missing {{ profile_missing | join(', ') }}.
+        <a href="/profile">Complete it →</a>
+      </div>
+    {% endif %}
+
+    <div class="transcript" id="transcript">
+      {% if not messages %}
+        <div class="empty-chat">
+          <p>Ask your coach anything, or ask for a program.</p>
+          <ul class="examples">
+            <li>Build me a 4-day week that fits 60 minutes a session.</li>
+            <li>My left shoulder aches on overhead pressing — what should I swap in?</li>
+            <li>What clubbell movements would add rotational work to my week?</li>
+            <li>Am I doing enough for my posterior chain right now?</li>
+          </ul>
+          <p class="hint">
+            Requests for a full program run the whole pipeline — draft, programming
+            checks, a reviewing-coach pass, then saved into wger. That takes tens of
+            seconds and you will see each step as it happens.
+          </p>
+        </div>
+      {% endif %}
+
+      {% for message in messages %}
+        {% if message.role == 'trace' %}
+          <div class="trace">{{ message.content }}</div>
+        {% else %}
+          <div class="msg {{ message.role }}">
+            <div class="bubble">{{ message.content }}</div>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <form class="composer" id="composer">
+      <textarea id="message" name="message" rows="2" required
+                placeholder="Ask your coach, or describe the program you want…"
+                aria-label="Message"></textarea>
+      <button type="submit" id="send">Send</button>
+    </form>
+    <p class="hint composer-hint">
+      Enter sends · Shift+Enter for a new line
+    </p>
+  </section>
+
+</main>
+<script src="/static/chat.js"></script>
+</body>
+</html>

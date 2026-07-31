@@ -420,7 +420,23 @@ excluded outright.
 
 ## Step 12 — Generate your first routine
 
-Dry run first: full pipeline, nothing written to wger.
+Open the coach: **`http://<nas-ip>:8100/`**
+
+Ask for a draft first, so nothing is written to wger until you have read it:
+
+> Draft me a 4-day kettlebell and clubbell strength program, 60 minutes a session. Show me the draft before saving it.
+
+The chat streams each step as it happens — which exercises it searched for, whether the
+programming checks passed, what the reviewing coach said. Expect 30–90 seconds and
+several model calls for a full program. Read the reasoning, then ask for changes in the
+same conversation and finally tell it to save.
+
+The coach decides for itself whether a message needs the full pipeline. Questions,
+single-exercise substitutions and "is my posterior chain volume enough" are answered
+directly, without the cost of a program build.
+
+The same pipeline is also reachable directly, which is useful for scripting or when you
+want the raw validator output:
 
 ```sh
 curl -s -X POST http://<nas-ip>:8100/api/routine/generate \
@@ -429,19 +445,8 @@ curl -s -X POST http://<nas-ip>:8100/api/routine/generate \
   | python3 -m json.tool
 ```
 
-Read `plan.rationale`, `violations` and `critic`. Expect this to take 30–90 seconds and
-several model calls.
-
-Then, for real:
-
-```sh
-curl -s -X POST http://<nas-ip>:8100/api/routine/generate \
-  -H 'Content-Type: application/json' \
-  -d '{"request":"4-day kettlebell and clubbell strength program","write":true}' \
-  | python3 -m json.tool
-```
-
-Open the returned `routine_url` in wger.
+That returns `plan.rationale`, `violations` and `critic` in full. Set `"write": true` to
+save, then open the returned `routine_url`.
 
 **This is where the untested code is most likely to break.** The config write path —
 sets/reps/weight/RIR/rest and the progression rule — is my best reading of wger's schema,
@@ -453,13 +458,9 @@ failure rolls the whole routine back, so a bad attempt cannot leave debris.
 
 ## Step 13 — Try a variation
 
-Ask for something novel, then review it:
+Ask for something novel in the chat:
 
-```sh
-curl -s -X POST http://<nas-ip>:8100/api/routine/generate \
-  -H 'Content-Type: application/json' \
-  -d '{"request":"Suggest two new clubbell core variations I could try","write":false}'
-```
+> Suggest two new clubbell core variations I could try.
 
 Then open `http://<nas-ip>:8100/variations`, read each movement, and approve or reject.
 Approved variations need one more import run to become loggable:
@@ -490,6 +491,8 @@ docker exec -i "$WGER" python3 manage.py shell < wger_import/import_exercises.py
 | Import: "no exercises this run has not already handled" | Link-back to the sidecar is failing. Check the agent's logs. |
 | Muscle names reported not found | Expected — ~12 muscles have no wger equivalent. Exercises still import. |
 | Routine generation times out | Normal on first run; several model calls plus ~100 wger writes. |
+| Chat answers but never searches or reads your profile | The gateway is dropping the tools array. Check `/capabilities` — a provider tiered `none` silently discards tools, so the coach answers from memory and looks like it is working. |
+| Chat replies but the sidebar stays on "New conversation" | Cosmetic only; the title is set server-side from the first message and appears on reload. |
 
 ## After it works
 

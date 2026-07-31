@@ -291,3 +291,188 @@ code {
 .verdict.approved { color: var(--accent); }
 .verdict.rejected { color: #b4453a; }
 .empty { padding: 2rem 1rem; text-align: center; color: var(--muted); }
+
+/* --- chat -------------------------------------------------------------------
+   The chat is the one full-height page: the transcript scrolls inside itself so the
+   composer stays put, rather than the whole document scrolling away from the input. */
+
+.chat-body { padding: 0; height: 100vh; overflow: hidden; }
+
+.chat-layout {
+  max-width: none;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.sessions {
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  padding: 1rem .75rem;
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+  min-height: 0;
+}
+
+.new-chat {
+  width: 100%;
+  padding: .55rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.session-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: .15rem; }
+
+.session {
+  display: block;
+  padding: .45rem .55rem;
+  border-radius: var(--radius);
+  text-decoration: none;
+  color: var(--ink);
+  border: 1px solid transparent;
+}
+.session:hover { background: var(--bg); }
+.session.active { border-color: var(--line); background: var(--bg); }
+.session-title {
+  display: block;
+  font-size: .89rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-meta { display: block; font-size: .74rem; color: var(--muted); }
+
+.side-links {
+  border-top: 1px solid var(--line);
+  padding-top: .75rem;
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  font-size: .87rem;
+}
+
+.conversation {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 1rem 1.25rem 1rem;
+}
+
+.chat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.chat-head h1 {
+  margin: 0 0 .75rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.delete-chat {
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: .8rem;
+  padding: .2rem .5rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.delete-chat:hover { color: #b4453a; border-color: #b4453a; }
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: .25rem 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+}
+
+.msg { display: flex; }
+.msg.user { justify-content: flex-end; }
+.bubble {
+  max-width: min(52rem, 82%);
+  padding: .6rem .85rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  /* Model output is plain text with real newlines; pre-wrap keeps its paragraphing
+     without needing a markdown renderer. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg.user .bubble { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.msg.error .bubble { background: var(--warn-bg); border-color: var(--warn-line); }
+
+/* Tool activity. Quieter than a message, but present — this is the record of what the
+   coach actually read and searched. */
+.trace {
+  font-size: .82rem;
+  color: var(--muted);
+  padding-left: .9rem;
+  border-left: 2px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.trace.working { font-style: italic; opacity: .85; }
+.trace.notice { color: var(--ink); border-left-color: var(--warn-line); }
+.trace.result { color: var(--ink); border-left-color: var(--accent); font-weight: 500; }
+.trace.failed { color: #b4453a; border-left-color: #b4453a; }
+.trace a { color: var(--accent); }
+
+.composer { display: flex; gap: .5rem; align-items: flex-end; }
+.composer textarea {
+  flex: 1;
+  margin: 0;
+  min-height: 3rem;
+  max-height: 12rem;
+  font: inherit;
+}
+.composer button {
+  padding: .6rem 1.1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.composer button:disabled { opacity: .55; cursor: default; }
+.composer-hint { margin: .35rem 0 0; }
+
+.empty-chat { color: var(--muted); padding: 1.5rem .25rem; }
+.empty-chat p { margin: 0 0 .6rem; }
+.examples { margin: 0 0 1rem; padding-left: 1.1rem; }
+.examples li { margin-bottom: .3rem; }
+
+@media (max-width: 720px) {
+  /* Below this the sidebar costs more than it gives; the session list moves to a
+     horizontal strip and the transcript takes the rest. */
+  .chat-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .sessions {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    flex-direction: row;
+    align-items: center;
+    gap: .5rem;
+    overflow-x: auto;
+    padding: .6rem .75rem;
+  }
+  .sessions form { flex: 0 0 auto; }
+  .new-chat { width: auto; white-space: nowrap; }
+  .session-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  .session { white-space: nowrap; }
+  .session-title { max-width: 9rem; }
+  .session-meta { display: none; }
+  .side-links { border-top: none; flex-direction: row; padding-top: 0; flex: 0 0 auto; }
+  .bubble { max-width: 92%; }
+}

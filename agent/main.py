@@ -1,18 +1,21 @@
 """Agent service — HTTP surface.
 
-Currently serves the trainee profile form and a health check. The chat interface,
-routine generation loop and variation review queue land here in later phases; this
-file is the entry point they attach to.
+Serves the coach chat, the trainee profile form, the exercise-variation review queue,
+a health check, and the JSON endpoints the wger-side import script calls.
 
-Server-rendered HTML with no build step: the whole UI is two templates and a stylesheet,
-which is the right size for a single-user self-hosted tool.
+Server-rendered HTML with no build step: three templates, one stylesheet and two small
+scripts, which is the right size for a single-user self-hosted tool. The chat streams
+newline-delimited JSON over `fetch` rather than using a framework.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import decimal
+import json
 import os
+import queue
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -20,10 +23,17 @@ from urllib.parse import quote
 
 import psycopg
 from fastapi import Body, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import chat
+import chat_repo
 import import_api
 import profile_repo
 from profile_repo import (
@@ -77,7 +87,8 @@ def health() -> JSONResponse:
 
 @app.get("/")
 def index() -> RedirectResponse:
-    return RedirectResponse("/profile")
+    """Chat is the primary surface; the profile form is reachable from it."""
+    return RedirectResponse("/chat")
 
 
 @app.get("/capabilities")
@@ -358,6 +369,161 @@ def routine_generate(payload: dict = Body(...)):
 
     return JSONResponse(_jsonable(result.as_dict()),
                         status_code=200 if result.ok else 422)
+
+
+# ---------------------------------------------------------------------------
+# Chat
+#
+# The pipeline behind a routine request takes tens of seconds and makes several model
+# calls, so progress is streamed rather than left to a spinner. Silence for that long
+# is indistinguishable from a hang, and the tool trace is also the evidence that the
+# coach actually read your profile and searched the database instead of improvising.
+# ---------------------------------------------------------------------------
+
+def _models() -> dict:
+    routine = os.environ.get("MODEL_ROUTINE", "anthropic/claude-sonnet-5")
+    return {
+        # Chat is the highest-frequency call, so it gets its own knob — the routine
+        # model is a sensible default but not necessarily the right cost point for
+        # conversation.
+        "chat_model": os.environ.get("MODEL_CHAT", routine),
+        "drafting_model": routine,
+        "escalation_model": os.environ.get(
+            "MODEL_ROUTINE_ESCALATION", "anthropic/claude-opus-5"
+        ),
+        "critic_model": os.environ.get("MODEL_CRITIC", "anthropic/claude-sonnet-5"),
+    }
+
+
+@app.get("/chat", response_class=HTMLResponse)
+def chat_index(request: Request):
+    """Land on the most recent conversation, creating one on a fresh install."""
+    with db() as conn:
+        sessions = chat_repo.list_sessions(conn)
+        if not sessions:
+            return RedirectResponse(f"/chat/{chat_repo.create_session(conn)}",
+                                    status_code=303)
+    return RedirectResponse(f"/chat/{sessions[0]['id']}", status_code=303)
+
+
+@app.post("/chat/new")
+def chat_new():
+    with db() as conn:
+        session_id = chat_repo.create_session(conn)
+    return RedirectResponse(f"/chat/{session_id}", status_code=303)
+
+
+@app.get("/chat/{session_id}", response_class=HTMLResponse)
+def chat_page(request: Request, session_id: int):
+    with db() as conn:
+        session = chat_repo.get_session(conn, session_id)
+        if session is None:
+            return RedirectResponse("/chat", status_code=303)
+        sessions = chat_repo.list_sessions(conn)
+        messages = chat_repo.visible_messages(conn, session_id)
+        profile = get_profile(conn)
+
+    complete, missing = (profile.is_complete_enough() if profile else (False, ["profile"]))
+    return templates.TemplateResponse(
+        request=request,
+        name="chat.html",
+        context={
+            "session": session,
+            "sessions": sessions,
+            "messages": messages,
+            # A coach with no profile can only give generic advice, and that is worth
+            # saying up front rather than letting the output quietly be worse.
+            "profile_complete": complete,
+            "profile_missing": missing,
+            "has_profile": profile is not None,
+        },
+    )
+
+
+@app.post("/chat/{session_id}/delete")
+def chat_delete(session_id: int):
+    with db() as conn:
+        chat_repo.delete_session(conn, session_id)
+    return RedirectResponse("/chat", status_code=303)
+
+
+@app.post("/chat/{session_id}/message")
+def chat_message(session_id: int, payload: dict = Body(...)):
+    """Stream one turn as newline-delimited JSON.
+
+    NDJSON over a POST rather than SSE via EventSource: EventSource is GET-only, which
+    would mean stashing the message somewhere first and fetching it back. `fetch` plus a
+    streamed body reads this directly, with no build step and no framing to get wrong.
+    """
+    text = (payload.get("message") or "").strip()
+    if not text:
+        return JSONResponse({"error": "'message' is required"}, status_code=400)
+
+    events: queue.Queue = queue.Queue()
+
+    def worker() -> None:
+        # A connection per turn, opened inside the thread: psycopg connections are not
+        # safe to share across threads.
+        try:
+            wger = None
+            try:
+                from wger_client import WgerClient
+                wger = WgerClient()
+            except Exception as exc:  # noqa: BLE001
+                # Degrade rather than refuse: most questions do not need the log, and
+                # the coach is told when it is unavailable.
+                events.put(("notice", {
+                    "text": f"Training app unreachable ({exc}); working without your log."
+                }))
+            with db() as conn:
+                chat.respond(
+                    conn, wger, session_id, text,
+                    emit=lambda kind, data: events.put((kind, data)),
+                    **_models(),
+                )
+        except Exception as exc:  # noqa: BLE001
+            events.put(("error", {"message": f"{type(exc).__name__}: {exc}"}))
+        finally:
+            events.put(None)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def stream():
+        yield json.dumps({"event": "accepted"}) + "\n"
+        while True:
+            try:
+                item = events.get(timeout=15)
+            except queue.Empty:
+                # A long model call produces no events; a keepalive distinguishes
+                # "still working" from a dropped connection.
+                yield json.dumps({"event": "ping"}) + "\n"
+                continue
+            if item is None:
+                break
+            kind, data = item
+            yield json.dumps({"event": kind, **_jsonable(data)}, default=str) + "\n"
+        yield json.dumps({"event": "done"}) + "\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="application/x-ndjson",
+        # nginx buffers proxied responses by default, which would hold the whole stream
+        # until completion. Harmless directly on :8100; correct if ever proxied.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/chat/{session_id}")
+def chat_json(session_id: int):
+    with db() as conn:
+        session = chat_repo.get_session(conn, session_id)
+        if session is None:
+            return JSONResponse({"error": "no such session"}, status_code=404)
+        return JSONResponse(_jsonable({
+            "session": session,
+            "messages": chat_repo.visible_messages(conn, session_id),
+            "replay": chat_repo.history(conn, session_id),
+        }))
 
 
 @app.get("/api/profile")

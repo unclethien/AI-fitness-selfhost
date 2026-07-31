@@ -148,6 +148,8 @@ services:
       # Model ids must match what YOUR gateway advertises — check
       # GET /capabilities on the agent, or the OmniRoute dashboard. Do not assume
       # OpenRouter's provider/model naming carries over.
+      # Chat is the highest-frequency call, so it is set separately from drafting.
+      MODEL_CHAT: anthropic/claude-sonnet-5
       MODEL_ROUTINE: anthropic/claude-sonnet-5
       MODEL_ROUTINE_ESCALATION: anthropic/claude-opus-5
       MODEL_VARIATION: anthropic/claude-sonnet-5

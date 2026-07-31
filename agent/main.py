@@ -60,6 +60,30 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 app.include_router(import_api.build_router(lambda: SIDECAR_DSN))
 
 
+DEFAULT_MODEL = "anthropic/claude-sonnet-5"
+
+
+def model_config() -> dict:
+    """Role -> model id, resolved from the environment.
+
+    Single source of truth on purpose. `/capabilities` and the code that actually runs
+    the models read the same mapping, so the readiness check cannot drift from what is
+    really used — a check that quietly omits a role is worse than no check, because it
+    reports ready for a model nobody probed.
+
+    Chat gets its own variable because it runs on every message and is therefore the one
+    worth choosing for cost; it defaults to the routine model.
+    """
+    routine = os.environ.get("MODEL_ROUTINE", DEFAULT_MODEL)
+    return {
+        "chat": os.environ.get("MODEL_CHAT", routine),
+        "routine": routine,
+        "escalation": os.environ.get("MODEL_ROUTINE_ESCALATION", "anthropic/claude-opus-5"),
+        "variation": os.environ.get("MODEL_VARIATION", DEFAULT_MODEL),
+        "critic": os.environ.get("MODEL_CRITIC", DEFAULT_MODEL),
+    }
+
+
 @contextmanager
 def db():
     conn = psycopg.connect(SIDECAR_DSN)
@@ -104,12 +128,7 @@ def capabilities():
     """
     from llm import LLMClient
 
-    models = {
-        "routine": os.environ.get("MODEL_ROUTINE", "anthropic/claude-sonnet-5"),
-        "escalation": os.environ.get("MODEL_ROUTINE_ESCALATION", "anthropic/claude-opus-5"),
-        "variation": os.environ.get("MODEL_VARIATION", "anthropic/claude-sonnet-5"),
-        "critic": os.environ.get("MODEL_CRITIC", "anthropic/claude-sonnet-5"),
-    }
+    models = model_config()
 
     report: dict = {"base_url": os.environ.get("LLM_BASE_URL"), "roles": {}}
     # Distinct model ids only — probing the same id four times is pure cost.
@@ -381,17 +400,13 @@ def routine_generate(payload: dict = Body(...)):
 # ---------------------------------------------------------------------------
 
 def _models() -> dict:
-    routine = os.environ.get("MODEL_ROUTINE", "anthropic/claude-sonnet-5")
+    """The keyword arguments `chat.respond` expects, from the shared role config."""
+    roles = model_config()
     return {
-        # Chat is the highest-frequency call, so it gets its own knob — the routine
-        # model is a sensible default but not necessarily the right cost point for
-        # conversation.
-        "chat_model": os.environ.get("MODEL_CHAT", routine),
-        "drafting_model": routine,
-        "escalation_model": os.environ.get(
-            "MODEL_ROUTINE_ESCALATION", "anthropic/claude-opus-5"
-        ),
-        "critic_model": os.environ.get("MODEL_CRITIC", "anthropic/claude-sonnet-5"),
+        "chat_model": roles["chat"],
+        "drafting_model": roles["routine"],
+        "escalation_model": roles["escalation"],
+        "critic_model": roles["critic"],
     }
 
 

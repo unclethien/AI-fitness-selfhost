@@ -2,9 +2,16 @@
 
 Takes about 45 minutes, most of it waiting on image pulls and the exercise import.
 
-**Nothing in this document has been executed.** It is written from TrueNAS and wger
-documentation, not from a working run. Expect at least one step to need adjustment; the
-checkpoints below tell you what "working" looks like at each stage so a failure is
+**Steps 0-6 have been executed on a real TrueNAS SCALE box** (2026-07-30) and the whole
+stack came up: wger, Postgres, redis, celery, PowerSync, the sidecar with its schema
+loaded, and the agent reporting `{"status":"ok"}`. That run found six defects, all fixed
+here — a Compose-only YAML tag TrueNAS rejects, a compose file generated on the wrong
+machine, two config files the dataset ACL left unreadable, a missing PowerSync setup
+command, and a mount path resolved against the wrong base directory.
+
+**Steps 7-13 have not been executed.** They are written from wger's REST API and Django
+source rather than from a working run, so expect at least one to need adjustment. The
+checkpoints below tell you what "working" looks like at each stage, so a failure is
 localized instead of mysterious.
 
 Replace `<base-path>` with your dataset base (e.g. `/mnt/Nas/Apps/fitness`) and `<nas-ip>`

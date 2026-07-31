@@ -198,6 +198,61 @@ if grep -qE '^\s+- \.{1,2}/' "$OUTPUT"; then
   problems=$((problems + 1))
 fi
 
+# A bind-mounted config file must be readable by the UID the container runs as. TrueNAS
+# datasets inherit an ACL that creates every file 770, so `other` gets nothing -- and the
+# services that read these files run as 999, not as the 1000 that owns them. Owning them
+# correctly is not enough. Symptom without this check: redis exits the instant it starts
+# and TrueNAS reports only `container ix-<app>-cache-1 is unhealthy`, which points at the
+# healthcheck rather than at a permission error.
+#
+# Deliberately a fixed list rather than every path in the generated file: the Postgres
+# data directories are correctly 700 and owned by their container's UID, so a generic
+# "is it world-readable" sweep would flag them and teach you to ignore the warning.
+other_can_read() {
+  local path="$1" mode other
+  # BSD stat (macOS, for generating during development) takes different flags than GNU.
+  mode="$(stat -c '%a' "$path" 2>/dev/null || stat -f '%Lp' "$path" 2>/dev/null)" || return 1
+  other="${mode: -1}"
+  [ $(( other & 4 )) -ne 0 ] || return 1
+  # A directory also needs the execute bit before anything inside it can be reached.
+  if [ -d "$path" ]; then [ $(( other & 1 )) -ne 0 ] || return 1; fi
+  return 0
+}
+
+# Confirmed to break the stack: both are read by a process running as UID 999.
+blocking_unreadable=()
+for path in "$WGER_REPO/config/redis.conf" "$AI_REPO/sidecar/schema.sql"; do
+  [ -e "$path" ] || continue
+  other_can_read "$path" || blocking_unreadable+=("$path")
+done
+
+# Same mechanism, but the reading UID depends on the image, so advise rather than block.
+advisory_unreadable=()
+for path in "$WGER_REPO/config/nginx.conf" "$WGER_REPO/config-powersync"; do
+  [ -e "$path" ] || continue
+  other_can_read "$path" || advisory_unreadable+=("$path")
+done
+
+if [ "${#blocking_unreadable[@]}" -gt 0 ]; then
+  warn "these files are not readable by the UID that has to read them (999):"
+  for path in "${blocking_unreadable[@]}"; do
+    printf '    %s  (mode %s)\n' "$path" \
+      "$(stat -c '%a' "$path" 2>/dev/null || stat -f '%Lp' "$path" 2>/dev/null)"
+  done
+  printf '\n  Fix, then re-run:\n    chmod o+r%s' \
+    "$(printf ' %s' "${blocking_unreadable[@]}")"
+  printf '\n\n  Do NOT chmod the whole config directory: prod.env holds SECRET_KEY and the\n'
+  printf '  database password, and only the root Docker daemon reads it.\n\n'
+  problems=$((problems + 1))
+fi
+
+if [ "${#advisory_unreadable[@]}" -gt 0 ]; then
+  warn "these may also need to be world-readable, depending on the image's user:"
+  for path in "${advisory_unreadable[@]}"; do
+    printf '    chmod -R o+rX %s\n' "$path"
+  done
+fi
+
 count="$(grep -c -- "$PASSWORD" "$OUTPUT" || true)"
 if [ "$count" -ne 2 ]; then
   warn "expected the sidecar password in 2 places, found $count"

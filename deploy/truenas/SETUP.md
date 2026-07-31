@@ -75,7 +75,7 @@ scp "Functional+Fitness+Exercise+Database+(version+2.9).xlsx" \
 
 ---
 
-## Step 4 — Fix ownership
+## Step 4 — Fix ownership and config-file readability
 
 This is the single most common cause of a stack that starts and then dies. wger's images
 run as UID/GID 1000; Postgres runs as 999.
@@ -85,6 +85,37 @@ cd <base-path>
 chown -R 1000:1000 wger-media wger-static repo
 chown -R 999:999   wger-postgres sidecar-postgres
 ```
+
+Then make the bind-mounted config files world-readable:
+
+```sh
+chmod o+r  repo/wger/config/redis.conf \
+           repo/wger/config/nginx.conf \
+           repo/ai-fitness/sidecar/schema.sql
+chmod -R o+rX repo/wger/config-powersync
+```
+
+This second part is easy to skip and fails confusingly. TrueNAS datasets inherit an ACL
+that creates every new file `770` — even files git would normally write as `644` — so
+`other` gets nothing. Three containers then cannot read a file they are handed:
+
+| File | Read by | If unreadable |
+|------|---------|---------------|
+| `config/redis.conf` | `redis`, UID 999 | `redis-server` exits immediately; Compose reports `cache-1 is unhealthy` and the whole stack refuses to come up |
+| `sidecar/schema.sql` | `postgres`, UID 999 | Schema never loads; every agent query fails on a missing table |
+| `config-powersync/` | powersync's own user | powersync restart-loops |
+
+Ownership alone is not enough here: these run as 999, not 1000, so being owned by
+`1000:1000` does not help them. wger's own compose file says as much — *"they should be
+readable by everyone."*
+
+`config/prod.env` is deliberately **not** in that list, and you should not
+`chmod -R o+r` the whole `config` directory. `prod.env` holds `SECRET_KEY` and your
+database password, and it is consumed through `env_file:`, which the Docker daemon reads
+as root — no container user ever needs it.
+
+A `git pull` in `repo/wger` recreates files under the same inherited ACL, so re-run the
+`chmod` after upgrading wger. `prepare.sh` checks this and prints the exact commands.
 
 ---
 
@@ -406,6 +437,8 @@ docker exec -i "$WGER" python3 manage.py shell < wger_import/import_exercises.py
 | Symptom | Cause |
 |---|---|
 | Container restart loop | Ownership (step 4). `docker logs <name> --tail 50`. |
+| `dependency failed to start: container ix-fitness-cache-1 is unhealthy` | `config/redis.conf` is not world-readable, so redis (UID 999) cannot read it and exits at once — note it fails in the same second it starts, rather than timing out. `chmod o+r` it (step 4). |
+| Agent errors on a missing sidecar table | `sidecar/schema.sql` was unreadable at first start, so initdb skipped it. `chmod o+r` it, then wipe `sidecar-postgres` so initdb re-runs. |
 | CSRF error on any wger form | `SITE_URL` / `CSRF_TRUSTED_ORIGINS` don't match the URL you typed, including port. |
 | `Invalid YAML provided` on install | You pasted `compose.yaml` instead of `compose.generated.yaml`. The template contains Compose's `!override` tag, which TrueNAS's YAML parser rejects. Run `prepare.sh` and paste its output. |
 | App won't start, port conflict | nginx still on 80. Regenerate with `prepare.sh`; it asserts nginx is not on 80 before succeeding. |

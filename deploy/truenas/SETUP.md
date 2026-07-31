@@ -2,17 +2,22 @@
 
 Takes about 45 minutes, most of it waiting on image pulls and the exercise import.
 
-**Steps 0-6 have been executed on a real TrueNAS SCALE box** (2026-07-30) and the whole
-stack came up: wger, Postgres, redis, celery, PowerSync, the sidecar with its schema
-loaded, and the agent reporting `{"status":"ok"}`. That run found six defects, all fixed
-here — a Compose-only YAML tag TrueNAS rejects, a compose file generated on the wrong
-machine, two config files the dataset ACL left unreadable, a missing PowerSync setup
-command, and a mount path resolved against the wrong base directory.
+**Steps 0-9 have been executed on a real TrueNAS SCALE box** (2026-07-30/31). The stack
+came up and the exercise database is live: 3,242 exercises extracted from the spreadsheet
+(2,328 clean, 914 flagged), all described, loaded into the sidecar alongside wger's own
+872, and imported into wger with `linked == total` for both sources and zero skips. wger
+went from 897 to 4,114 exercises.
 
-**Steps 7-13 have not been executed.** They are written from wger's REST API and Django
-source rather than from a working run, so expect at least one to need adjustment. The
-checkpoints below tell you what "working" looks like at each stage, so a failure is
-localized instead of mysterious.
+That run found nine defects, all fixed here: a Compose-only YAML tag TrueNAS rejects, a
+compose file generated on the wrong machine, three permission problems caused by the
+dataset ACL (redis.conf, schema.sql, and the static/media directories), a missing
+PowerSync setup command, a mount path resolved against the wrong base directory, a
+placeholder API token sent as if real, and a step ordered before the token it needed.
+
+**Steps 10-13 have not been executed.** The two genuinely unproven things live there:
+whether your gateway does native tool calling (step 10), and whether wger's routine
+config-write semantics match my reading of its source (step 12). The checkpoints tell you
+what "working" looks like, so a failure is localized instead of mysterious.
 
 Replace `<base-path>` with your dataset base (e.g. `/mnt/Nas/Apps/fitness`) and `<nas-ip>`
 with your TrueNAS IP throughout. Step 6 generates a filled-in compose file for you.
@@ -428,8 +433,13 @@ port is published on `0.0.0.0` rather than bound to `127.0.0.1` only.
 **Then set the model IDs.** Note the exact IDs OmniRoute advertises — from the command
 above, or its dashboard at `http://<nas-ip>:20128/dashboard`. **Do not assume OpenRouter's
 `provider/model` naming carries over.** Put the real IDs in the compose YAML
-(`MODEL_ROUTINE`, `MODEL_ROUTINE_ESCALATION`, `MODEL_VARIATION`, `MODEL_CRITIC`) and
-redeploy the app.
+(`MODEL_CHAT`, `MODEL_ROUTINE`, `MODEL_ROUTINE_ESCALATION`, `MODEL_VARIATION`,
+`MODEL_CRITIC`) and redeploy the app.
+
+`MODEL_CHAT` is the one that runs on every message, so it is the one to pick for cost;
+`MODEL_ROUTINE_ESCALATION` only fires after two failed reviews. Set `WGER_API_TOKEN` in
+the same edit if you have not already — it is still `CHANGEME_wger_token`, and the routine
+writer in step 12 needs it.
 
 **Checkpoint — the most important one in this document:**
 

@@ -43,7 +43,11 @@
 #      SITE_URL and CSRF_TRUSTED_ORIGINS must match how you actually reach it, or
 #      every form submission fails with a CSRF error.
 #
-#   5. Replace every <pool> below, and fill in the environment values marked CHANGEME.
+#   5. Generate a filled-in copy rather than editing this file by hand — the base path
+#      appears in eight places and the sidecar password has to match in two:
+#        ./deploy/truenas/prepare.sh --base-path /mnt/POOL/Apps/fitness --ip 192.168.0.x
+#      That writes deploy/truenas/compose.generated.yaml and validates the result.
+#      WGER_API_TOKEN stays a placeholder until step 8.
 #
 # PORTS: TrueNAS SCALE's own web UI listens on 80 and 443. wger's nginx defaults to
 # 80, which collides. This file remaps it to 8080 rather than moving the NAS UI —

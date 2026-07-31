@@ -7,7 +7,8 @@ documentation, not from a working run. Expect at least one step to need adjustme
 checkpoints below tell you what "working" looks like at each stage so a failure is
 localized instead of mysterious.
 
-Replace `<pool>` with your pool name and `<nas-ip>` with your TrueNAS IP throughout.
+Replace `<base-path>` with your dataset base (e.g. `/mnt/Nas/Apps/fitness`) and `<nas-ip>`
+with your TrueNAS IP throughout. Step 6 generates a filled-in compose file for you.
 
 **Assumes OmniRoute is already installed and running** on this TrueNAS as its own app,
 reachable at `http://<nas-ip>:20128`.
@@ -29,13 +30,16 @@ In the UI: **System → Update** shows the version.
 **Storage → Datasets**, select your pool, then **Add Dataset** for each of these. Defaults
 are fine for every field.
 
-| Dataset | Holds | Snapshot priority |
+Names are relative to the pool, and **case-sensitive** — whatever you use here must match
+the `--base-path` you pass in step 6 exactly.
+
+| Dataset (under your pool) | Holds | Snapshot priority |
 |---|---|---|
-| `apps/fitness/wger-postgres` | Your training log, routines, body metrics | **High — irreplaceable** |
-| `apps/fitness/wger-media` | Exercise images | Medium |
-| `apps/fitness/wger-static` | Static assets | None needed |
-| `apps/fitness/sidecar-postgres` | Exercise data, profile, chat | Low — rebuildable |
-| `apps/fitness/repo` | This repo and wger's compose | Low — it's in git |
+| `Apps/fitness/wger-postgres` | Your training log, routines, body metrics | **High — irreplaceable** |
+| `Apps/fitness/wger-media` | Exercise images | Medium |
+| `Apps/fitness/wger-static` | Static assets | None needed |
+| `Apps/fitness/sidecar-postgres` | Exercise data, profile, chat | Low — rebuildable |
+| `Apps/fitness/repo` | This repo and wger's compose | Low — it's in git |
 
 OmniRoute keeps its own storage under its own app; nothing to create for it here.
 
@@ -54,7 +58,7 @@ minute, so don't spend retention on it.
 ## Step 3 — Clone both repos
 
 ```sh
-cd /mnt/<pool>/apps/fitness/repo
+cd <base-path>/repo
 git clone https://github.com/wger-project/docker.git wger
 git clone <your-repo-url> ai-fitness
 ```
@@ -63,10 +67,10 @@ Then copy your spreadsheet into `ai-fitness/`. From your Mac:
 
 ```sh
 scp "Functional+Fitness+Exercise+Database+(version+2.9).xlsx" \
-    root@<nas-ip>:/mnt/<pool>/apps/fitness/repo/ai-fitness/
+    root@<nas-ip>:<base-path>/repo/ai-fitness/
 ```
 
-**Checkpoint:** `ls /mnt/<pool>/apps/fitness/repo/ai-fitness/` shows `agent/`, `etl/`,
+**Checkpoint:** `ls <base-path>/repo/ai-fitness/` shows `agent/`, `etl/`,
 `sidecar/`, and the `.xlsx`.
 
 ---
@@ -77,7 +81,7 @@ This is the single most common cause of a stack that starts and then dies. wger'
 run as UID/GID 1000; Postgres runs as 999.
 
 ```sh
-cd /mnt/<pool>/apps/fitness
+cd <base-path>
 chown -R 1000:1000 wger-media wger-static repo
 chown -R 999:999   wger-postgres sidecar-postgres
 ```
@@ -87,7 +91,7 @@ chown -R 999:999   wger-postgres sidecar-postgres
 ## Step 5 — Configure wger
 
 ```sh
-cd /mnt/<pool>/apps/fitness/repo/wger
+cd <base-path>/repo/wger
 python3 -c "import secrets; print(secrets.token_urlsafe(50))"   # copy the output
 nano config/prod.env
 ```
@@ -119,20 +123,38 @@ remaps wger accordingly. Don't move the NAS UI instead; that risks locking you o
 
 ## Step 6 — Install the app
 
-1. Open the compose file and replace every `<pool>` and `<nas-ip>`:
-   ```sh
-   sed -i 's|<pool>|YOURPOOL|g; s|<nas-ip>|192.168.1.50|g' \
-       /mnt/<pool>/apps/fitness/repo/ai-fitness/deploy/truenas/compose.yaml
-   ```
-2. Set `CHANGEME_sidecar_password` — the **same value in both places** it appears
-   (the `sidecar-db` environment and the agent's `SIDECAR_DSN`). Leave
-   `CHANGEME_wger_token` alone; you create it in step 8.
-3. Confirm `LLM_BASE_URL` points at your existing OmniRoute:
-   `http://<nas-ip>:20128/v1`. It must be the **NAS IP, not `http://omniroute:20128`** —
-   OmniRoute is a separate TrueNAS app, so it is a separate Compose project on a separate
-   Docker network and the service name will not resolve from this app.
-4. In the UI: **Apps → Discover Apps → Custom App → Install via YAML**. Paste the whole
-   file. Name the app `fitness`. Install.
+Don't hand-edit the template. The base path appears in eight places and the sidecar
+password has to match in two — a mismatch surfaces as an opaque authentication error.
+Generate a filled-in copy instead:
+
+```sh
+cd <base-path>/repo/ai-fitness
+./deploy/truenas/prepare.sh --base-path <base-path> --ip <nas-ip>
+```
+
+Substitute the **whole base path**, not just a pool name: dataset paths are
+case-sensitive, so `/mnt/Nas/Apps/fitness` is not `/mnt/Nas/apps/fitness`.
+
+That writes `deploy/truenas/compose.generated.yaml`, prints the generated database
+password, and validates the result — no leftover placeholders, the password present in
+exactly two places, a correct `include:` path, and structurally valid YAML. It refuses
+to declare success if any of those fail. The generated file is gitignored because it
+contains a real password.
+
+Options if the defaults don't suit: `--wger-port`, `--agent-port`, `--gateway-port`,
+`--password`.
+
+Then:
+
+1. **Save the printed password** somewhere. It is not shown again.
+2. Confirm `LLM_BASE_URL` points at your existing gateway on the **NAS IP**, not
+   `http://omniroute:20128` — the gateway is a separate TrueNAS app, so it is a separate
+   Compose project on a separate Docker network and the service name will not resolve
+   from this app.
+3. `WGER_API_TOKEN` is still `CHANGEME_wger_token`. Leave it; you create the token in
+   step 8 and redeploy.
+4. In the UI: **Apps → Discover Apps → Custom App → Install via YAML**. Paste the
+   contents of `compose.generated.yaml`. Name the app `fitness`. Install.
 
 **Checkpoint:** `docker ps` shows containers for wger's `web`, `db`, `nginx`, `cache`,
 celery, plus `sidecar-db` and `agent` (OmniRoute appears too, from its own app). Find
@@ -210,7 +232,7 @@ from wger_client import WgerClient; print(WgerClient().check_connection())"
 Staged deliberately — 3,242 rows is not something to fire blind.
 
 ```sh
-cd /mnt/<pool>/apps/fitness/repo/ai-fitness
+cd <base-path>/repo/ai-fitness
 
 # Dry run: reports what would happen, writes nothing
 docker exec -i -e DRY_RUN=1 "$WGER" python3 manage.py shell \

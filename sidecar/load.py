@@ -142,11 +142,29 @@ def load_custom(conn, jsonl_path: Path) -> int:
     return len(rows)
 
 
+def usable_token(token: str | None) -> str | None:
+    """None unless the token looks like a real one.
+
+    The deployment ships `WGER_API_TOKEN` as a `CHANGEME_...` placeholder until the
+    account exists, and DRF answers an *invalid* token with 401 rather than falling
+    back to anonymous. Since wger's exercise endpoints are publicly readable, sending
+    the placeholder turns a step that would have worked into an auth error.
+    """
+    cleaned = (token or "").strip()
+    if not cleaned or cleaned.upper().startswith("CHANGEME"):
+        return None
+    return cleaned
+
+
 def fetch_wger_exercises(base_url: str, token: str | None) -> list[dict]:
     """Page through /api/v2/exerciseinfo/ and flatten into the sidecar shape."""
     session = requests.Session()
-    if token:
-        session.headers["Authorization"] = f"Token {token}"
+    real_token = usable_token(token)
+    if real_token:
+        session.headers["Authorization"] = f"Token {real_token}"
+    elif token:
+        print("note: WGER_API_TOKEN is still a placeholder; reading exercises "
+              "anonymously (they are public)")
     url = f"{base_url.rstrip('/')}/api/v2/exerciseinfo/?format=json&limit=100"
     out: list[dict] = []
 

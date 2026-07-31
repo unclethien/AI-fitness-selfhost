@@ -239,6 +239,21 @@ echo "wger=$WGER agent=$AGENT"
 If a container is restarting, `docker logs <name> --tail 50` almost always names the
 cause. Permissions (step 4) and `SECRET_KEY`/`SITE_URL` (step 5) cover most of it.
 
+### Updating the agent after a `git pull`
+
+The agent's Python is `COPY`ed into its image at build time, so pulling new code is not
+enough — and TrueNAS's Stop/Start reuses the existing image rather than rebuilding it.
+Force a rebuild:
+
+```sh
+cd <base-path>/repo/ai-fitness && git pull
+docker rmi $(docker inspect --format '{{.Image}}' ix-fitness-agent-1)
+```
+
+Then Stop and Start the app in the UI; Compose rebuilds the missing image. The ETL and
+loader scripts are exempt — they execute from the `/repo` bind mount, so they always run
+whatever is checked out.
+
 ### Then create PowerSync's storage role
 
 wger's stack needs one command after the containers start — it is the second half of
@@ -277,6 +292,13 @@ error.
 The ETL runs **inside the agent container** — the TrueNAS host has nowhere to
 pip-install `openpyxl` that survives an OS upgrade.
 
+`$AGENT` comes from step 6 and is gone if you opened a new shell. Re-derive it, or use
+the literal name (TrueNAS names containers `ix-<app>-<service>-1`):
+
+```sh
+AGENT=$(docker ps --format '{{.Names}}' | grep agent | head -1)   # or: ix-fitness-agent-1
+```
+
 ```sh
 # 1. Extract and normalize the spreadsheet (~10 seconds)
 docker exec -w /repo "$AGENT" python etl/extract_custom_db.py
@@ -290,6 +312,15 @@ docker exec -w /repo "$AGENT" python sidecar/load.py --custom
 # 4. Mirror wger's own 828 exercises into the same schema
 docker exec -w /repo "$AGENT" python sidecar/load.py --wger --wger-url http://web:8000
 ```
+
+These run against the repo **bind mount** at `/repo`, not the code baked into the image,
+so a `git pull` takes effect without rebuilding. (The service code does not — see
+"Updating the agent" in step 6.)
+
+Step 4 needs no API token. wger's exercise endpoints are publicly readable, and the
+loader deliberately ignores a `CHANGEME_` placeholder rather than sending it: an invalid
+token gets a 401 from DRF instead of falling back to anonymous, which would fail this
+step for a reason that looks nothing like the cause.
 
 **Checkpoint:** step 1 prints `extracted 3242 exercises`, and step 4's summary shows
 roughly 3,242 `ffed-2.9` plus 828 `wger-upstream`. Then:

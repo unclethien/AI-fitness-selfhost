@@ -11,9 +11,12 @@
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
-CREATE TYPE exercise_source AS ENUM ('ffed-2.9', 'wger-upstream', 'generated-variation');
+DO $do$ BEGIN
+    CREATE TYPE exercise_source AS ENUM ('ffed-2.9', 'wger-upstream', 'generated-variation');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 
-CREATE TABLE exercises (
+CREATE TABLE IF NOT EXISTS exercises (
     id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     uuid                  UUID        NOT NULL UNIQUE,
     source                exercise_source NOT NULL,
@@ -78,27 +81,27 @@ CREATE TABLE exercises (
 
 -- The agent filters on combinations of these, so they are indexed individually
 -- (Postgres can combine them via bitmap AND) rather than as one composite index.
-CREATE INDEX exercises_difficulty_rank_idx ON exercises (difficulty_rank);
-CREATE INDEX exercises_body_region_idx     ON exercises (body_region);
-CREATE INDEX exercises_mechanics_idx       ON exercises (mechanics);
-CREATE INDEX exercises_laterality_idx      ON exercises (laterality);
-CREATE INDEX exercises_force_type_idx      ON exercises (force_type);
-CREATE INDEX exercises_primary_equipment_idx ON exercises (primary_equipment);
-CREATE INDEX exercises_target_muscle_idx   ON exercises (target_muscle_group);
-CREATE INDEX exercises_source_idx          ON exercises (source);
-CREATE INDEX exercises_loggable_idx        ON exercises (wger_exercise_id)
+CREATE INDEX IF NOT EXISTS exercises_difficulty_rank_idx ON exercises (difficulty_rank);
+CREATE INDEX IF NOT EXISTS exercises_body_region_idx     ON exercises (body_region);
+CREATE INDEX IF NOT EXISTS exercises_mechanics_idx       ON exercises (mechanics);
+CREATE INDEX IF NOT EXISTS exercises_laterality_idx      ON exercises (laterality);
+CREATE INDEX IF NOT EXISTS exercises_force_type_idx      ON exercises (force_type);
+CREATE INDEX IF NOT EXISTS exercises_primary_equipment_idx ON exercises (primary_equipment);
+CREATE INDEX IF NOT EXISTS exercises_target_muscle_idx   ON exercises (target_muscle_group);
+CREATE INDEX IF NOT EXISTS exercises_source_idx          ON exercises (source);
+CREATE INDEX IF NOT EXISTS exercises_loggable_idx        ON exercises (wger_exercise_id)
     WHERE wger_exercise_id IS NOT NULL;
 
 -- Array columns need GIN for containment/overlap queries
 -- ("any exercise whose movement patterns overlap {Hip Hinge, Knee Dominant}").
-CREATE INDEX exercises_movement_patterns_idx ON exercises USING GIN (movement_patterns);
-CREATE INDEX exercises_planes_idx            ON exercises USING GIN (planes_of_motion);
-CREATE INDEX exercises_wger_equipment_idx    ON exercises USING GIN (wger_equipment);
-CREATE INDEX exercises_wger_muscles_idx      ON exercises USING GIN (wger_muscles);
-CREATE INDEX exercises_qc_flags_idx          ON exercises USING GIN (qc_flags);
+CREATE INDEX IF NOT EXISTS exercises_movement_patterns_idx ON exercises USING GIN (movement_patterns);
+CREATE INDEX IF NOT EXISTS exercises_planes_idx            ON exercises USING GIN (planes_of_motion);
+CREATE INDEX IF NOT EXISTS exercises_wger_equipment_idx    ON exercises USING GIN (wger_equipment);
+CREATE INDEX IF NOT EXISTS exercises_wger_muscles_idx      ON exercises USING GIN (wger_muscles);
+CREATE INDEX IF NOT EXISTS exercises_qc_flags_idx          ON exercises USING GIN (qc_flags);
 
 -- Trigram index for fuzzy name lookup ("did you mean 'Bulgarian split squat'?").
-CREATE INDEX exercises_name_trgm_idx ON exercises USING GIN (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS exercises_name_trgm_idx ON exercises USING GIN (name gin_trgm_ops);
 
 CREATE OR REPLACE FUNCTION touch_updated_at() RETURNS TRIGGER AS $$
 BEGIN
@@ -107,7 +110,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER exercises_touch_updated_at
+CREATE OR REPLACE TRIGGER exercises_touch_updated_at
     BEFORE UPDATE ON exercises
     FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
@@ -116,9 +119,12 @@ CREATE TRIGGER exercises_touch_updated_at
 -- Recombining equipment x posture x grip x movement pattern can produce movements that
 -- are nonsensical or unsafe. Nothing reaches wger (or the exercises table) until a
 -- human approves it, because this stack writes into a real training log.
-CREATE TYPE variation_status AS ENUM ('pending', 'approved', 'rejected');
+DO $do$ BEGIN
+    CREATE TYPE variation_status AS ENUM ('pending', 'approved', 'rejected');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 
-CREATE TABLE staged_variations (
+CREATE TABLE IF NOT EXISTS staged_variations (
     id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     status            variation_status NOT NULL DEFAULT 'pending',
     name              TEXT NOT NULL,
@@ -136,18 +142,18 @@ CREATE TABLE staged_variations (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX staged_variations_status_idx ON staged_variations (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS staged_variations_status_idx ON staged_variations (status, created_at DESC);
 
 -- Chat sessions for the web UI. Kept here rather than in wger so wger's schema is
 -- untouched and a reset of the AI layer cannot affect training data.
-CREATE TABLE chat_sessions (
+CREATE TABLE IF NOT EXISTS chat_sessions (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     title       TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE chat_messages (
+CREATE TABLE IF NOT EXISTS chat_messages (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id  BIGINT NOT NULL REFERENCES chat_sessions (id) ON DELETE CASCADE,
     role        TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
@@ -163,15 +169,15 @@ CREATE TABLE chat_messages (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX chat_messages_session_idx ON chat_messages (session_id, id);
+CREATE INDEX IF NOT EXISTS chat_messages_session_idx ON chat_messages (session_id, id);
 
-CREATE TRIGGER chat_sessions_touch_updated_at
+CREATE OR REPLACE TRIGGER chat_sessions_touch_updated_at
     BEFORE UPDATE ON chat_sessions
     FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
 -- Routines the agent has written into wger, so the UI can show provenance and the
 -- agent can avoid regenerating something near-identical.
-CREATE TABLE generated_routines (
+CREATE TABLE IF NOT EXISTS generated_routines (
     id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     wger_routine_id   INTEGER,
     session_id        BIGINT REFERENCES chat_sessions (id) ON DELETE SET NULL,
@@ -182,11 +188,11 @@ CREATE TABLE generated_routines (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX generated_routines_created_idx ON generated_routines (created_at DESC);
+CREATE INDEX IF NOT EXISTS generated_routines_created_idx ON generated_routines (created_at DESC);
 
 -- Convenience view: exercises the agent may put in a routine. An exercise without a
 -- wger id cannot be logged, so it must not be selected for a real routine.
-CREATE VIEW loggable_exercises AS
+CREATE OR REPLACE VIEW loggable_exercises AS
 SELECT *
 FROM exercises
 WHERE wger_exercise_id IS NOT NULL;
@@ -199,13 +205,16 @@ WHERE wger_exercise_id IS NOT NULL;
 -- personal. Read before every routine generation, together with recent logs.
 -- ============================================================================
 
-CREATE TYPE experience_level AS ENUM (
-    'novice',        -- < 6 months consistent training; linear progression works
-    'intermediate',  -- 6 months - 2 years; needs double progression / undulation
-    'advanced'       -- 2+ years; needs block periodization / autoregulation
-);
+DO $do$ BEGIN
+    CREATE TYPE experience_level AS ENUM (
+        'novice',        -- < 6 months consistent training; linear progression works
+        'intermediate',  -- 6 months - 2 years; needs double progression / undulation
+        'advanced'       -- 2+ years; needs block periodization / autoregulation
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 
-CREATE TABLE trainee_profile (
+CREATE TABLE IF NOT EXISTS trainee_profile (
     id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     display_name       TEXT,
 
@@ -242,24 +251,27 @@ CREATE TABLE trainee_profile (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TRIGGER trainee_profile_touch_updated_at
+CREATE OR REPLACE TRIGGER trainee_profile_touch_updated_at
     BEFORE UPDATE ON trainee_profile
     FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
 -- Goals are weighted, not singular. "General fitness + fat loss + strength" is the
 -- common real case, and those goals imply partly conflicting programming (a deficit
 -- blunts strength adaptation), so the generator needs to know what to prioritize.
-CREATE TYPE training_goal AS ENUM (
-    'general_fitness',
-    'fat_loss',
-    'strength',
-    'hypertrophy',
-    'endurance',
-    'mobility',
-    'skill'
-);
+DO $do$ BEGIN
+    CREATE TYPE training_goal AS ENUM (
+        'general_fitness',
+        'fat_loss',
+        'strength',
+        'hypertrophy',
+        'endurance',
+        'mobility',
+        'skill'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 
-CREATE TABLE trainee_goals (
+CREATE TABLE IF NOT EXISTS trainee_goals (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     profile_id  BIGINT NOT NULL REFERENCES trainee_profile (id) ON DELETE CASCADE,
     goal        training_goal NOT NULL,
@@ -273,18 +285,21 @@ CREATE TABLE trainee_goals (
 --
 -- Scope note: these are TRAINEE-DECLARED restrictions. Nothing here diagnoses,
 -- assesses, or substitutes for a clinician.
-CREATE TYPE contraindication_kind AS ENUM (
-    'exercise',          -- one specific exercise, by sidecar id
-    'movement_pattern',  -- e.g. 'Vertical Push' after a shoulder impingement
-    'equipment',         -- e.g. 'Barbell'
-    'posture',           -- e.g. 'Hanging'
-    'body_region',       -- e.g. 'Lower Body'
-    'plane_of_motion',
-    'classification',    -- e.g. 'Plyometric' when impact is contraindicated
-    'max_difficulty'     -- value is a difficulty_rank ceiling, 1-8
-);
+DO $do$ BEGIN
+    CREATE TYPE contraindication_kind AS ENUM (
+        'exercise',          -- one specific exercise, by sidecar id
+        'movement_pattern',  -- e.g. 'Vertical Push' after a shoulder impingement
+        'equipment',         -- e.g. 'Barbell'
+        'posture',           -- e.g. 'Hanging'
+        'body_region',       -- e.g. 'Lower Body'
+        'plane_of_motion',
+        'classification',    -- e.g. 'Plyometric' when impact is contraindicated
+        'max_difficulty'     -- value is a difficulty_rank ceiling, 1-8
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 
-CREATE TABLE trainee_contraindications (
+CREATE TABLE IF NOT EXISTS trainee_contraindications (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     profile_id  BIGINT NOT NULL REFERENCES trainee_profile (id) ON DELETE CASCADE,
     kind        contraindication_kind NOT NULL,
@@ -300,12 +315,17 @@ CREATE TABLE trainee_contraindications (
     UNIQUE (profile_id, kind, value)
 );
 
-CREATE INDEX trainee_contraindications_profile_idx
-    ON trainee_contraindications (profile_id)
-    WHERE expires_on IS NULL OR expires_on >= CURRENT_DATE;
+-- Plain, not partial. A partial index's predicate must be IMMUTABLE and CURRENT_DATE is
+-- only STABLE, so `WHERE expires_on IS NULL OR expires_on >= CURRENT_DATE` is rejected by
+-- Postgres. That rejection used to abort the rest of this file under psql's
+-- ON_ERROR_STOP, leaving trainee_benchmarks and routine_reviews uncreated in a database
+-- that otherwise looked fine. The expiry filter lives in the query instead; this table
+-- holds a handful of rows per trainee, so the predicate bought nothing anyway.
+CREATE INDEX IF NOT EXISTS trainee_contraindications_profile_idx
+    ON trainee_contraindications (profile_id);
 
 -- Known working loads, so prescribed weights are real numbers rather than "moderate".
-CREATE TABLE trainee_benchmarks (
+CREATE TABLE IF NOT EXISTS trainee_benchmarks (
     id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     profile_id   BIGINT NOT NULL REFERENCES trainee_profile (id) ON DELETE CASCADE,
     exercise_id  BIGINT REFERENCES exercises (id) ON DELETE SET NULL,
@@ -317,12 +337,12 @@ CREATE TABLE trainee_benchmarks (
     CHECK (exercise_id IS NOT NULL OR label IS NOT NULL)
 );
 
-CREATE INDEX trainee_benchmarks_profile_idx
+CREATE INDEX IF NOT EXISTS trainee_benchmarks_profile_idx
     ON trainee_benchmarks (profile_id, recorded_on DESC);
 
 -- Outcome of the generate -> validate -> critic -> revise loop, kept for every
 -- attempt so programming quality is auditable over time rather than anecdotal.
-CREATE TABLE routine_reviews (
+CREATE TABLE IF NOT EXISTS routine_reviews (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     generated_routine_id BIGINT REFERENCES generated_routines (id) ON DELETE CASCADE,
     iteration           SMALLINT NOT NULL DEFAULT 1,
@@ -335,4 +355,4 @@ CREATE TABLE routine_reviews (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX routine_reviews_routine_idx ON routine_reviews (generated_routine_id, iteration);
+CREATE INDEX IF NOT EXISTS routine_reviews_routine_idx ON routine_reviews (generated_routine_id, iteration);

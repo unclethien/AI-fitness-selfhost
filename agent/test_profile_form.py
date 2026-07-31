@@ -16,7 +16,10 @@ sys.path.insert(0, str(REPO / "coaching"))
 
 import psycopg
 
-STATE = {"profile": None, "goals": [], "cis": [], "writes": []}
+# `tables` is what the fake database reports from information_schema. Seeded from
+# schema.sql so the complete case is genuinely complete, and mutable so the incomplete
+# case can be tested — that is the case that shipped broken twice.
+STATE = {"profile": None, "goals": [], "cis": [], "writes": [], "tables": None}
 
 VOCAB = {
     "primary_equipment": ["Barbell", "Bodyweight", "Clubbell", "Dumbbell", "Kettlebell",
@@ -43,6 +46,8 @@ class FakeCursor:
         self._rows = []
         if "count(*) from exercises" in low:
             self._rows = [(4070,)]
+        elif "information_schema.tables" in low:
+            self._rows = [(name,) for name in sorted(STATE["tables"] or ())]
         elif "from trainee_profile" in low and low.startswith("select"):
             self._rows = [STATE["profile"]] if STATE["profile"] else []
         elif "from trainee_goals" in low and low.startswith("select"):
@@ -109,9 +114,31 @@ def check(label, cond, extra=""):
 
 
 print("=== health")
+
+# A complete schema, taken from the file itself rather than a hand-copied list.
+STATE["tables"] = set(main.expected_tables())
+check("schema.sql yields the expected tables", len(STATE["tables"]) == 10,
+      sorted(STATE["tables"]))
+
 r = client.get("/health")
 check("health returns ok", r.status_code == 200 and r.json()["status"] == "ok", r.text[:200])
 check("health reports exercise count", r.json().get("exercises") == 4070)
+
+# The failure that reported healthy twice: the cluster exists and answers queries, but
+# the init script aborted partway and some tables were never created.
+STATE["tables"] = set(main.expected_tables()) - {"trainee_benchmarks", "routine_reviews"}
+r = client.get("/health")
+body = r.json()
+check("an incomplete schema is degraded, not ok", r.status_code == 503, r.text[:200])
+check("the missing tables are named",
+      body.get("missing_tables") == ["routine_reviews", "trainee_benchmarks"], body)
+check("the error says what is wrong", "schema incomplete" in body.get("error", ""), body)
+check("the fix is included in the response", "schema.sql" in body.get("fix", ""), body)
+check("the exercise count still reported", body.get("exercises") == 4070, body)
+
+STATE["tables"] = set(main.expected_tables())
+check("health recovers once the schema is complete",
+      client.get("/health").status_code == 200)
 
 print("\n=== empty profile renders")
 r = client.get("/profile")

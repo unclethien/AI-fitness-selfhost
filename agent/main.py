@@ -15,6 +15,7 @@ import decimal
 import json
 import os
 import queue
+import re
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -93,20 +94,66 @@ def db():
         conn.close()
 
 
+SCHEMA_PATH = BASE_DIR.parent / "sidecar" / "schema.sql"
+
+
+def expected_tables() -> set:
+    """Table names `schema.sql` creates, read from the file rather than duplicated here.
+
+    Parsing the schema keeps this list from drifting as the schema changes, and the file
+    ships in the image alongside the code that depends on it.
+    """
+    try:
+        text = SCHEMA_PATH.read_text()
+    except OSError:
+        return set()
+    return set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", text))
+
+
 @app.get("/health")
 def health() -> JSONResponse:
-    """Liveness plus a real dependency check, so an unreachable database is visible
-    in the container's health status rather than only on first use."""
+    """Liveness, a real dependency check, and a schema check.
+
+    The schema check exists because of a specific failure this stack hit twice: the
+    Postgres entrypoint creates the cluster *before* running the init scripts and aborts
+    the rest of the file on the first error, then restarts into a populated data
+    directory and skips initialization entirely. The result is a database that answers
+    queries, passes `pg_isready`, and is missing tables — so a liveness probe reports
+    healthy while the application is broken. Comparing against `schema.sql` turns that
+    into a visible, named fault.
+    """
     try:
         with db() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM exercises")
             exercise_count = cur.fetchone()[0]
-        return JSONResponse({"status": "ok", "exercises": exercise_count})
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public'"
+            )
+            present = {row[0] for row in cur.fetchall()}
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             {"status": "degraded", "error": f"{type(exc).__name__}: {exc}"},
             status_code=503,
         )
+
+    missing = sorted(expected_tables() - present)
+    if missing:
+        return JSONResponse(
+            {
+                "status": "degraded",
+                "error": f"schema incomplete: missing {', '.join(missing)}",
+                "missing_tables": missing,
+                "exercises": exercise_count,
+                "fix": (
+                    "Re-apply the schema; it is idempotent: "
+                    "docker exec -i <sidecar-db> psql -U fitness -d exercise_intel "
+                    "< sidecar/schema.sql"
+                ),
+            },
+            status_code=503,
+        )
+    return JSONResponse({"status": "ok", "exercises": exercise_count})
 
 
 @app.get("/")

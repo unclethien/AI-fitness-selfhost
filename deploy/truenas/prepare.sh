@@ -22,6 +22,7 @@ NAS_IP=""
 WGER_PORT="8080"
 AGENT_PORT="8100"
 GATEWAY_PORT="20128"
+TIMEZONE="America/Chicago"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$1"; }
@@ -40,6 +41,7 @@ options:
   --wger-port N      Port to expose wger on          (default 8080)
   --agent-port N     Port to expose the agent on     (default 8100)
   --gateway-port N   Port your LLM gateway listens on (default 20128)
+  --timezone TZ      IANA timezone                    (default America/Chicago)
   --password VALUE   Use this sidecar DB password instead of generating one
 USAGE
 }
@@ -52,6 +54,7 @@ while [ $# -gt 0 ]; do
     --wger-port) WGER_PORT="${2:-}"; shift 2 ;;
     --agent-port) AGENT_PORT="${2:-}"; shift 2 ;;
     --gateway-port) GATEWAY_PORT="${2:-}"; shift 2 ;;
+    --timezone) TIMEZONE="${2:-}"; shift 2 ;;
     --password) PASSWORD="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1 (see --help)" ;;
@@ -107,23 +110,39 @@ info "NAS IP      $NAS_IP"
 info "wger        http://$NAS_IP:$WGER_PORT"
 info "agent       http://$NAS_IP:$AGENT_PORT"
 info "LLM gateway http://$NAS_IP:$GATEWAY_PORT/v1"
+info "timezone    $TIMEZONE"
 
-# TrueNAS names datasets without the /mnt/ prefix, and the template's header comments
-# refer to them that way. Derive that form so the comments end up correct too.
-DATASET_PATH="${BASE_PATH#/mnt/}"
+# Delegate to the generator: it flattens wger's compose stack, absolutizes every
+# relative path against the file it came from, applies our overrides with explicit
+# replace semantics, and emits plain tag-free YAML. sed cannot do any of that, and the
+# `!override` tag the template used is rejected by TrueNAS's YAML parser.
+WGER_REPO="${WGER_REPO:-$BASE_PATH/repo/wger}"
+AI_REPO="${AI_REPO:-$BASE_PATH/repo/ai-fitness}"
 
-# Order matters: the full mount path is substituted before the bare dataset form, so the
-# more specific pattern wins and cannot be mangled by the looser one.
-sed \
-  -e "s|/mnt/<pool>/apps/fitness|$BASE_PATH|g" \
-  -e "s|<pool>/apps/fitness|$DATASET_PATH|g" \
-  -e "s|<nas-ip>|$NAS_IP|g" \
-  -e "s|<truenas-ip>|$NAS_IP|g" \
-  -e "s|CHANGEME_sidecar_password|$PASSWORD|g" \
-  -e "s|\"8080:80\"|\"$WGER_PORT:80\"|g" \
-  -e "s|\"8100:8000\"|\"$AGENT_PORT:8000\"|g" \
-  -e "s|:20128/v1|:$GATEWAY_PORT/v1|g" \
-  "$TEMPLATE" > "$OUTPUT"
+if [ ! -f "$WGER_REPO/docker-compose.yml" ]; then
+  fail "wger's compose not found at $WGER_REPO/docker-compose.yml
+
+  This must run on the TrueNAS box, after setup step 3:
+    cd $BASE_PATH/repo
+    git clone https://github.com/wger-project/docker.git wger
+
+  Override the location with WGER_REPO=/path/to/wger if it lives elsewhere."
+fi
+
+command -v python3 >/dev/null 2>&1 || fail "python3 is required to generate the compose file"
+
+python3 "$REPO_ROOT/deploy/truenas/generate_compose.py" \
+  --base-path "$BASE_PATH" \
+  --ip "$NAS_IP" \
+  --password "$PASSWORD" \
+  --timezone "$TIMEZONE" \
+  --wger-port "$WGER_PORT" \
+  --agent-port "$AGENT_PORT" \
+  --gateway-port "$GATEWAY_PORT" \
+  --wger-repo "$WGER_REPO" \
+  --repo "$AI_REPO" \
+  --output "$OUTPUT" \
+  || fail "generating the compose file failed"
 
 # --- validate --------------------------------------------------------------------
 problems=0
@@ -135,52 +154,57 @@ if [ -n "$leftover" ]; then
   problems=$((problems + 1))
 fi
 
-# The password must appear exactly twice: the sidecar-db environment and the agent DSN.
-# Any other count means the template changed and this script needs updating.
+# Compose-specific YAML tags are exactly what TrueNAS rejects with "Invalid YAML
+# provided", so assert the output is free of them.
+if grep -qE '!override|!reset' "$OUTPUT"; then
+  warn "output contains a Compose-specific YAML tag; TrueNAS will reject it"
+  problems=$((problems + 1))
+fi
+
+# Any surviving relative host path would resolve against an unknown working directory.
+if grep -qE '^\s+- \.{1,2}/' "$OUTPUT"; then
+  warn "output still contains relative host paths:"
+  grep -nE '^\s+- \.{1,2}/' "$OUTPUT"
+  problems=$((problems + 1))
+fi
+
 count="$(grep -c -- "$PASSWORD" "$OUTPUT" || true)"
 if [ "$count" -ne 2 ]; then
   warn "expected the sidecar password in 2 places, found $count"
   problems=$((problems + 1))
 fi
 
-if ! grep -q "^  - path: $BASE_PATH/repo/wger/docker-compose.yml" "$OUTPUT"; then
-  warn "the wger compose include path does not look right; check --base-path"
-  problems=$((problems + 1))
-fi
-
-if command -v python3 >/dev/null 2>&1; then
-  # !override is a Compose-specific YAML tag; strip it just for the syntax check.
-  # Exit status 2 means PyYAML is unavailable, which is a skip rather than a failure.
-  set +e
-  python3 - "$OUTPUT" <<'YAMLCHECK'
+# Parse with a STRICT parser -- no tag stripping -- because that is what TrueNAS does.
+set +e
+python3 - "$OUTPUT" <<'YAMLCHECK'
 import sys
 try:
     import yaml
 except ImportError:
     sys.exit(2)
-text = open(sys.argv[1]).read().replace("!override", "")
 try:
-    doc = yaml.safe_load(text)
-    top = sorted(doc)
-    assert top == ["include", "name", "services"], f"unexpected top-level keys: {top}"
+    doc = yaml.safe_load(open(sys.argv[1]).read())
+    assert "services" in doc, "no services key"
     services = sorted(doc["services"])
     for required in ("agent", "sidecar-db", "db", "nginx", "web"):
         assert required in services, f"missing service: {required}"
+    ports = doc["services"]["nginx"].get("ports") or []
+    assert not any(str(p).startswith("80:") for p in ports), \
+        f"nginx still publishes port 80, which collides with the TrueNAS UI: {ports}"
 except Exception as exc:
     print(f"   {type(exc).__name__}: {exc}")
     sys.exit(1)
-print("   YAML OK - services: " + ", ".join(services))
+print("   strict YAML parse OK - services: " + ", ".join(services))
 YAMLCHECK
-  yaml_status=$?
-  set -e
-  if [ "$yaml_status" -eq 2 ]; then
-    warn "PyYAML not installed; skipped structural validation of the generated YAML"
-  elif [ "$yaml_status" -ne 0 ]; then
-    warn "generated YAML failed validation"
-    problems=$((problems + 1))
-  fi
-else
-  warn "python3 not found; skipped YAML validation"
+yaml_status=$?
+set -e
+if [ "$yaml_status" -eq 2 ]; then
+  warn "PyYAML not installed; could not verify the output parses. Install it before"
+  warn "pasting into TrueNAS: pip install --user pyyaml"
+  problems=$((problems + 1))
+elif [ "$yaml_status" -ne 0 ]; then
+  warn "generated YAML failed validation"
+  problems=$((problems + 1))
 fi
 
 echo

@@ -123,38 +123,63 @@ remaps wger accordingly. Don't move the NAS UI instead; that risks locking you o
 
 ## Step 6 — Install the app
 
-Don't hand-edit the template. The base path appears in eight places and the sidecar
-password has to match in two — a mismatch surfaces as an opaque authentication error.
-Generate a filled-in copy instead:
+Don't hand-edit the template — and don't paste `compose.yaml` itself. Generate a
+flattened copy:
 
 ```sh
 cd <base-path>/repo/ai-fitness
 ./deploy/truenas/prepare.sh --base-path <base-path> --ip <nas-ip>
 ```
 
-Substitute the **whole base path**, not just a pool name: dataset paths are
-case-sensitive, so `/mnt/Nas/Apps/fitness` is not `/mnt/Nas/apps/fitness`.
+For example, for a pool named `Nas` with datasets under `Apps/fitness`:
 
-That writes `deploy/truenas/compose.generated.yaml`, prints the generated database
-password, and validates the result — no leftover placeholders, the password present in
-exactly two places, a correct `include:` path, and structurally valid YAML. It refuses
-to declare success if any of those fail. The generated file is gitignored because it
-contains a real password.
+```sh
+./deploy/truenas/prepare.sh --base-path /mnt/Nas/Apps/fitness --ip 192.168.0.199
+```
 
-Options if the defaults don't suit: `--wger-port`, `--agent-port`, `--gateway-port`,
-`--password`.
+Pass the **whole base path**, not just a pool name: dataset paths are case-sensitive, so
+`/mnt/Nas/Apps/fitness` is not `/mnt/Nas/apps/fitness`.
+
+This must run **on the TrueNAS box, after step 3**, because it reads wger's cloned
+compose files.
+
+### Why generated rather than hand-edited
+
+TrueNAS validates the pasted YAML with a standard parser, which rejects Docker Compose's
+own tags (`!override`, `!reset`) as unknown — you get `Invalid YAML provided`. That rules
+out `include:`-ing wger's compose and overriding a few keys, because replacing a *list*
+(the nginx port) without `!override` makes Compose **append**, leaving `80:80` in place
+and colliding with the TrueNAS web UI.
+
+So the generator resolves everything up front and emits one flat, tag-free file. It also
+handles three things `sed` cannot:
+
+- **Nine relative paths** across wger's compose files, each resolving relative to the
+  file it appears in rather than one project root. Left alone, the stack starts and
+  immediately dies on missing env files.
+- **The `static` and `media` named volumes**, redirected onto datasets *everywhere* they
+  are referenced. nginx mounts both to serve them and celery_worker writes to media —
+  pointing only `web` at a bind mount leaves nginx serving an empty volume, so every
+  static asset 404s while nothing looks obviously broken.
+- **The sidecar password**, written to both places it is needed.
+
+wger's clone is only ever read, never modified, so `git pull` there stays safe. Re-run
+`prepare.sh` afterwards to pick up upstream changes.
+
+It validates before declaring success: no leftover placeholders, no Compose tags, no
+relative host paths, password in exactly two places, nginx not on port 80, and a **strict**
+YAML parse with no tag stripping — the same thing TrueNAS does.
+
+Options: `--wger-port`, `--agent-port`, `--gateway-port`, `--timezone`, `--password`.
 
 Then:
 
-1. **Save the printed password** somewhere. It is not shown again.
-2. Confirm `LLM_BASE_URL` points at your existing gateway on the **NAS IP**, not
-   `http://omniroute:20128` — the gateway is a separate TrueNAS app, so it is a separate
-   Compose project on a separate Docker network and the service name will not resolve
-   from this app.
-3. `WGER_API_TOKEN` is still `CHANGEME_wger_token`. Leave it; you create the token in
-   step 8 and redeploy.
-4. In the UI: **Apps → Discover Apps → Custom App → Install via YAML**. Paste the
-   contents of `compose.generated.yaml`. Name the app `fitness`. Install.
+1. **Save the printed password.** It is not shown again.
+2. Confirm `LLM_BASE_URL` points at your gateway on the **NAS IP** — it is a separate
+   TrueNAS app on a separate Docker network, so a service name will not resolve.
+3. `WGER_API_TOKEN` is still `CHANGEME_wger_token`. Leave it; step 8 creates it.
+4. **Apps → Discover Apps → Custom App → Install via YAML**. Paste the contents of
+   **`deploy/truenas/compose.generated.yaml`**. Name the app `fitness`. Install.
 
 **Checkpoint:** `docker ps` shows containers for wger's `web`, `db`, `nginx`, `cache`,
 celery, plus `sidecar-db` and `agent` (OmniRoute appears too, from its own app). Find
@@ -382,7 +407,10 @@ docker exec -i "$WGER" python3 manage.py shell < wger_import/import_exercises.py
 |---|---|
 | Container restart loop | Ownership (step 4). `docker logs <name> --tail 50`. |
 | CSRF error on any wger form | `SITE_URL` / `CSRF_TRUSTED_ORIGINS` don't match the URL you typed, including port. |
-| App won't start, port conflict | wger's nginx still on 80. The `!override` tag on `ports` is required — Compose *appends* to lists otherwise. |
+| `Invalid YAML provided` on install | You pasted `compose.yaml` instead of `compose.generated.yaml`. The template contains Compose's `!override` tag, which TrueNAS's YAML parser rejects. Run `prepare.sh` and paste its output. |
+| App won't start, port conflict | nginx still on 80. Regenerate with `prepare.sh`; it asserts nginx is not on 80 before succeeding. |
+| Containers die on missing env file | A relative path survived flattening. Regenerate with `prepare.sh` rather than hand-editing. |
+| Static assets and exercise images 404 | nginx serving an empty named volume. Regenerate — the generator redirects `static`/`media` on every service that mounts them. |
 | `/health` says `degraded` | Agent can't reach `sidecar-db`; check the password matches in both places. |
 | `capabilities` shows tools dropped | That OmniRoute upstream provider doesn't support native tool calling. Switch to one listed as `native`. |
 | Agent can't reach OmniRoute | Must be the NAS IP, not `http://omniroute:20128` — separate app, separate Docker network. Check OmniRoute's port is published on `0.0.0.0`. |

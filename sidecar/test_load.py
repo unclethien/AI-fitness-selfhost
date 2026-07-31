@@ -102,6 +102,39 @@ check("401 with a real token says the token itself is wrong",
       message and "WAS sent but rejected" in message, message)
 
 
+print("\nmangled arguments are caught, not passed to requests")
+
+def url_attempt(value):
+    try:
+        load.check_url(value)
+    except SystemExit as exc:
+        return str(exc)
+    return None
+
+check("a bare token as the URL is rejected",
+      url_attempt("2a0e01d25eae56e4ab20cec6fb1ffe293882ed46") is not None)
+check("the rejection explains the argument order",
+      "--wger-url http://web:8000 --wger-token" in
+      (url_attempt("2a0e01d25eae56e4ab20cec6fb1ffe293882ed46") or ""))
+check("an empty URL is rejected", url_attempt("") is not None)
+check("a host with no scheme is rejected", url_attempt("web:8000") is not None)
+check("http passes", url_attempt("http://web:8000") is None)
+check("https passes", url_attempt("https://wger.example.com") is None)
+check("a trailing slash is normalized away",
+      load.check_url("http://web:8000/") == "http://web:8000")
+check("surrounding whitespace is stripped",
+      load.check_url("  http://web:8000  ") == "http://web:8000")
+
+# The SECRET_KEY paste: right shape for a secret, wrong shape for a token.
+check("a 40-hex token is accepted silently",
+      load.TOKEN_PATTERN.match("2a0e01d25eae56e4ab20cec6fb1ffe293882ed46") is not None)
+check("a 67-char urlsafe secret does not match a token",
+      load.TOKEN_PATTERN.match(
+          "TD8ZcS5GIY1WNAlG8E74irTNIMBr_7XTr2t3kN_tT_bIy5i-hWtZ4gU65g_PlrG2d3E") is None)
+check("uppercase hex is not silently accepted",
+      load.TOKEN_PATTERN.match("2A0E01D25EAE56E4AB20CEC6FB1FFE293882ED46") is None)
+
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: " + "; ".join(failures))

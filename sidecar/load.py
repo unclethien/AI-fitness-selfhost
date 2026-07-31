@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -157,10 +158,43 @@ def usable_token(token: str | None) -> str | None:
     return cleaned
 
 
+# wger issues DRF authtoken keys: 40 hex characters. Checked only to catch a paste of
+# the wrong value -- notably SECRET_KEY, which step 5 has you generate with
+# secrets.token_urlsafe(50) and which comes out as 67 base64url characters. A warning
+# rather than an error, because the format is wger's to change, not ours to enforce.
+TOKEN_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+
+def check_url(base_url: str) -> str:
+    """Reject a URL that requests would only reject later, less clearly.
+
+    A long-running command whose arguments get mangled by a terminal line wrap is worth
+    one cheap check: without a scheme, `requests` reports the token as a hostname.
+    """
+    cleaned = (base_url or "").strip()
+    if not cleaned.startswith(("http://", "https://")):
+        sys.exit(
+            f"error: --wger-url must start with http:// or https://, got {cleaned!r}\n\n"
+            "  Inside the compose project wger is reachable as http://web:8000\n"
+            "  If that value looks like your token, the arguments got shifted:\n"
+            "    --wger-url http://web:8000 --wger-token <40-hex-token>"
+        )
+    return cleaned.rstrip("/")
+
+
 def fetch_wger_exercises(base_url: str, token: str | None) -> list[dict]:
     """Page through /api/v2/exerciseinfo/ and flatten into the sidecar shape."""
+    base_url = check_url(base_url)
     session = requests.Session()
     real_token = usable_token(token)
+    if real_token and not TOKEN_PATTERN.match(real_token):
+        print(
+            f"warning: --wger-token does not look like a wger API token "
+            f"({len(real_token)} characters; expected 40 hex).\n"
+            "         67 base64url characters is a Django SECRET_KEY, not an API token.\n"
+            "         Retrieve the real one from wger -> API key, or with:\n"
+            "           manage.py shell -> Token.objects.get_or_create(user=...)"
+        )
     if real_token:
         session.headers["Authorization"] = f"Token {real_token}"
     elif token:
@@ -169,7 +203,7 @@ def fetch_wger_exercises(base_url: str, token: str | None) -> list[dict]:
         # configured to allow it will work.
         print("note: WGER_API_TOKEN is still a placeholder, so no token is being sent. "
               "If wger requires authentication this will fail with 403.")
-    url = f"{base_url.rstrip('/')}/api/v2/exerciseinfo/?format=json&limit=100"
+    url = f"{base_url}/api/v2/exerciseinfo/?format=json&limit=100"
     out: list[dict] = []
 
     while url:

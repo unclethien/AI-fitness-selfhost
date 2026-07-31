@@ -227,14 +227,11 @@ their real names — TrueNAS prefixes them:
 docker ps --format '{{.Names}}\t{{.Status}}'
 ```
 
-Save the names you'll need. Everything below uses `docker exec`, not
-`docker compose exec`, because TrueNAS owns the compose project:
-
-```sh
-WGER=$(docker ps --format '{{.Names}}' | grep -E 'web' | head -1)
-AGENT=$(docker ps --format '{{.Names}}' | grep -E 'agent' | head -1)
-echo "wger=$WGER agent=$AGENT"
-```
+Everything below uses `docker exec`, not `docker compose exec`, because TrueNAS owns the
+compose project. Later steps spell the container names out literally — with the app named
+`fitness` they are `ix-fitness-web-1`, `ix-fitness-agent-1`, `ix-fitness-db-1`,
+`ix-fitness-sidecar-db-1`, `ix-fitness-cache-1` and `ix-fitness-powersync-1`. If you named
+the app something else, substitute accordingly.
 
 If a container is restarting, `docker logs <name> --tail 50` almost always names the
 cause. Permissions (step 4) and `SECRET_KEY`/`SITE_URL` (step 5) cover most of it.
@@ -260,7 +257,7 @@ wger's stack needs one command after the containers start — it is the second h
 wger's own two-step TLDR, and nothing in the compose file does it for you:
 
 ```sh
-docker exec "$WGER" ./manage.py setup-powersync-storage
+docker exec ix-fitness-web-1 ./manage.py setup-powersync-storage
 docker restart $(docker ps -a --format '{{.Names}}' | grep powersync | head -1)
 ```
 
@@ -292,25 +289,24 @@ error.
 The ETL runs **inside the agent container** — the TrueNAS host has nowhere to
 pip-install `openpyxl` that survives an OS upgrade.
 
-`$AGENT` comes from step 6 and is gone if you opened a new shell. Re-derive it, or use
-the literal name (TrueNAS names containers `ix-<app>-<service>-1`):
-
-```sh
-AGENT=$(docker ps --format '{{.Names}}' | grep agent | head -1)   # or: ix-fitness-agent-1
-```
+Container names are literal below rather than shell variables. An unset variable here
+silently shifts the arguments — `docker exec -w /repo $AGENT python x.py` with `$AGENT`
+empty reports `No such container: python`, which reads like a broken image. TrueNAS names
+containers `ix-<app-name>-<service>-1`; confirm yours with
+`docker ps --format '{{.Names}}'`.
 
 ```sh
 # 1. Extract and normalize the spreadsheet (~10 seconds)
-docker exec -w /repo "$AGENT" python etl/extract_custom_db.py
+docker exec -w /repo ix-fitness-agent-1 python etl/extract_custom_db.py
 
 # 2. Read the data-quality report before loading anything
-docker exec -w /repo "$AGENT" cat build/qc_report.md | head -40
+docker exec -w /repo ix-fitness-agent-1 cat build/qc_report.md | head -40
 
 # 3. Load into the sidecar
-docker exec -w /repo "$AGENT" python sidecar/load.py --custom
+docker exec -w /repo ix-fitness-agent-1 python sidecar/load.py --custom
 
 # 4. Mirror wger's own 828 exercises into the same schema
-docker exec -w /repo "$AGENT" python sidecar/load.py --wger --wger-url http://web:8000
+docker exec -w /repo ix-fitness-agent-1 python sidecar/load.py --wger --wger-url http://web:8000
 ```
 
 These run against the repo **bind mount** at `/repo`, not the code baked into the image,
@@ -345,7 +341,7 @@ matches in both places in the compose file.
 **Checkpoint:**
 
 ```sh
-docker exec "$AGENT" python -c "
+docker exec ix-fitness-agent-1 python -c "
 from wger_client import WgerClient; print(WgerClient().check_connection())"
 # {'ok': True, ...}
 ```
@@ -360,11 +356,11 @@ Staged deliberately — 3,242 rows is not something to fire blind.
 cd <base-path>/repo/ai-fitness
 
 # Dry run: reports what would happen, writes nothing
-docker exec -i -e DRY_RUN=1 "$WGER" python3 manage.py shell \
+docker exec -i -e DRY_RUN=1 ix-fitness-web-1 python3 manage.py shell \
   < wger_import/import_exercises.py
 
 # 25 exercises, so you can eyeball them before committing
-docker exec -i -e IMPORT_LIMIT=25 "$WGER" python3 manage.py shell \
+docker exec -i -e IMPORT_LIMIT=25 ix-fitness-web-1 python3 manage.py shell \
   < wger_import/import_exercises.py
 ```
 
@@ -374,10 +370,10 @@ downstream assumes the import is right.
 
 ```sh
 # The rest (a few minutes)
-docker exec -i "$WGER" python3 manage.py shell < wger_import/import_exercises.py
+docker exec -i ix-fitness-web-1 python3 manage.py shell < wger_import/import_exercises.py
 
 # Refresh wger's cached exercise API so the mobile apps see them
-docker exec "$WGER" python3 manage.py warmup-exercise-api-cache --force
+docker exec ix-fitness-web-1 python3 manage.py warmup-exercise-api-cache --force
 ```
 
 **Checkpoint:** `curl -s http://<nas-ip>:8100/api/import/status` shows `linked` equal to
@@ -397,7 +393,7 @@ OmniRoute is already running, so this is just wiring plus one important check.
 thing most likely to be wrong here:
 
 ```sh
-docker exec "$AGENT" python -c "
+docker exec ix-fitness-agent-1 python -c "
 import urllib.request, json
 url = 'http://<nas-ip>:20128/v1/models'
 print(json.loads(urllib.request.urlopen(url, timeout=10).read())['data'][:3])"
@@ -497,7 +493,7 @@ Then open `http://<nas-ip>:8100/variations`, read each movement, and approve or 
 Approved variations need one more import run to become loggable:
 
 ```sh
-docker exec -i "$WGER" python3 manage.py shell < wger_import/import_exercises.py
+docker exec -i ix-fitness-web-1 python3 manage.py shell < wger_import/import_exercises.py
 ```
 
 ---

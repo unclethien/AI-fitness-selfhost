@@ -232,6 +232,37 @@ echo "wger=$WGER agent=$AGENT"
 If a container is restarting, `docker logs <name> --tail 50` almost always names the
 cause. Permissions (step 4) and `SECRET_KEY`/`SITE_URL` (step 5) cover most of it.
 
+### Then create PowerSync's storage role
+
+wger's stack needs one command after the containers start — it is the second half of
+wger's own two-step TLDR, and nothing in the compose file does it for you:
+
+```sh
+docker exec "$WGER" ./manage.py setup-powersync-storage
+docker restart $(docker ps -a --format '{{.Names}}' | grep powersync | head -1)
+```
+
+`prod.env` already points PowerSync at
+`postgres://powersync_storage:powersync_password@db:5432/wger`, but the role itself does
+not exist until you run this. Skip it and the `powersync` container restart-loops on:
+
+```
+Fatal startup error - exiting with code 150.
+password authentication failed for user "powersync_storage"
+```
+
+The SQL that creates that role lives in `dev-postgres/initdb/03-powersync.sql`, which only
+the *development* compose stack mounts — so it never runs in production, and it is not an
+initdb script you can add after the fact, because initdb only fires on an empty data
+directory.
+
+PowerSync backs offline mode in wger's mobile app. Nothing else in this stack depends on
+it, so a restart-looping `powersync` container does not block the web UI, the import, or
+the agent — you can carry on and fix it later if you only use the browser.
+
+**Checkpoint:** `docker logs <powersync-container> --tail 5` no longer shows the auth
+error.
+
 ---
 
 ## Step 7 — Load the exercise database
@@ -438,6 +469,7 @@ docker exec -i "$WGER" python3 manage.py shell < wger_import/import_exercises.py
 |---|---|
 | Container restart loop | Ownership (step 4). `docker logs <name> --tail 50`. |
 | `dependency failed to start: container ix-fitness-cache-1 is unhealthy` | `config/redis.conf` is not world-readable, so redis (UID 999) cannot read it and exits at once — note it fails in the same second it starts, rather than timing out. `chmod o+r` it (step 4). |
+| powersync: `password authentication failed for user "powersync_storage"` | The role is created by a management command, not by the compose file. Run `docker exec <web> ./manage.py setup-powersync-storage` (end of step 6), then restart the powersync container. Affects mobile offline sync only. |
 | Agent errors on a missing sidecar table | `sidecar/schema.sql` was unreadable at first start, so initdb skipped it. `chmod o+r` it, then wipe `sidecar-postgres` so initdb re-runs. |
 | CSRF error on any wger form | `SITE_URL` / `CSRF_TRUSTED_ORIGINS` don't match the URL you typed, including port. |
 | `Invalid YAML provided` on install | You pasted `compose.yaml` instead of `compose.generated.yaml`. The template contains Compose's `!override` tag, which TrueNAS's YAML parser rejects. Run `prepare.sh` and paste its output. |

@@ -319,7 +319,7 @@ so a `git pull` takes effect without rebuilding. (The service code does not — 
 `0 loggable` is correct at this point — nothing is loggable until the wger import in
 step 9.
 
-Mirroring wger's own 828 exercises is **step 8**, not this step: it needs an API token,
+Mirroring wger's own exercises is **step 8**, not this step: it needs an API token,
 which does not exist until you have registered.
 
 ---
@@ -357,11 +357,13 @@ docker exec -w /repo ix-fitness-agent-1 \
   python sidecar/load.py --wger --wger-url http://web:8000 --wger-token <your-token>
 ```
 
-**Checkpoint:** the summary shows roughly 3,242 `ffed-2.9` plus 828 `wger-upstream`.
+**Checkpoint:** the summary shows 3,242 `ffed-2.9` plus wger's own exercises as
+`wger-upstream`. That second count depends on your wger version — measured at 872 on
+2026-07-30, and it grows upstream — so treat it as "roughly 850-900", not an exact figure.
 
 ```sh
 curl -s http://<nas-ip>:8100/health
-# {"status":"ok","exercises":4070}
+# {"status":"ok","exercises":4114}      <- 3,242 + whatever wger shipped
 ```
 
 A `degraded` status means the agent cannot reach `sidecar-db` — check the password

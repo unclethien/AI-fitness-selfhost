@@ -1,7 +1,7 @@
 # AI fitness self-host
 
 Self-hosted [wger](https://github.com/wger-project/wger) plus an AI agent that generates
-workout routines — and new exercise variations — from a combined pool of wger's 828
+workout routines — and new exercise variations — from a combined pool of wger's ~870
 upstream exercises and the 3,242-exercise Functional Fitness Exercise Database (v2.9).
 
 ## How it fits together

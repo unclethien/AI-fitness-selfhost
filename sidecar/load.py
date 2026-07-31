@@ -4,7 +4,8 @@
 Two sources, one schema, so the agent queries a single pool:
 
   --custom   build/exercises.jsonl produced by etl/extract_custom_db.py (3,242 rows)
-  --wger     the wger instance's own exercises via /api/v2/exerciseinfo/ (828 rows)
+  --wger     the wger instance's own exercises via /api/v2/exerciseinfo/
+             (~870 rows; the exact count depends on your wger version)
 
 Both are upserts keyed on `uuid`, so re-running is safe and idempotent. Custom rows
 carry a project-local UUIDv5 (see etl/extract_custom_db.py); wger rows carry wger's

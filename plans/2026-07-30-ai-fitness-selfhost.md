@@ -10,7 +10,7 @@ grammar via `pglast` (30 statements parse), which catches syntax but not semanti
 ## Outcome
 
 A self-hosted fitness stack where an AI agent generates workout routines — and new
-exercise variations — from a combined exercise pool of wger's 828 upstream exercises
+exercise variations — from a combined exercise pool of wger's ~870 upstream exercises
 plus the 3,242-exercise Functional Fitness Exercise Database (v2.9), and writes real
 routines into wger via its REST API.
 

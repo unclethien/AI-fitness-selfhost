@@ -70,6 +70,13 @@ pulling, and direct core work.
 - Sessions that fit the stated time budget.
 - A named progression model with concrete numbers, not "add weight when you can".
 
+How to shape the plan you submit: `days` lists one object per day of the week, each with \
+an `order` from 1. `entries` is ONE FLAT LIST of every exercise in the whole routine — \
+each entry carries `day` (matching a day's `order`) and `slot` (its position within that \
+day, from 1). Two entries sharing the same `day` AND `slot` are a superset. Progression \
+goes in the flat `progress_operation` / `progress_step` / `progress_value` fields on an \
+entry, and the block-level `progression_model` / `progression_detail` at the top.
+
 Only use exercise ids returned by search_exercises. Never invent an id. The routine name \
 must be 25 characters or fewer and day names 20 or fewer — these are hard limits in the \
 training app.

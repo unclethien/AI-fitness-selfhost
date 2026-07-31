@@ -494,6 +494,33 @@ trip and a failure mode to every message.
 system prompt tells the model not to emit markdown. If it emits it anyway, you see the
 asterisks. A renderer is a later call, not a silent `innerHTML`.
 
+## Routine plan wire format
+
+The model emits two flat arrays — `days` and `entries`, joined by a day number — and
+`routine_schema.normalize_plan()` expands them into the nested day → slots → entries
+shape the validator and writer use. Supersets are entries sharing a day and slot, which
+is exactly what wger's data model means by a slot with several entries.
+
+The reason is a gateway limit, not taste. OmniRoute rejected the nested schema with
+`503 {'code': 'chat_admission_busy', 'reason': 'structure_limit'}` on six consecutive
+attempts while accepting the chat surface's tools from the same service. Measured, the
+difference was structural depth: each level of data nesting costs about three levels of
+JSON Schema nesting, so plan → days → slots → entries → progression reached depth 18 as a
+tool payload against 7 for the tools that worked. Flat brings the payload to 9 and the
+plan schema itself to 6.
+
+Enum lists moved out of `entries[]` into prose descriptions for the same reason — a
+nested `enum` costs two levels — and `normalize_plan` enforces the values instead, so an
+unrecognized entry type or progression operation is dropped rather than reaching wger and
+failing the whole write.
+
+`normalize_plan` is idempotent, so payloads stored before the change still load.
+
+**If depth 9 still trips the limit**, the next step is two-phase drafting: search with the
+read tools only (depth 7, proven), then submit through `response_format: json_schema`,
+which this gateway advertises as supported, so the plan schema never enters the tools
+array at all. The flat schema is a prerequisite for that either way.
+
 ## Open questions
 
 **Resolved:** TrueNAS SCALE confirmed. `Load Position = Order` confirmed legitimate

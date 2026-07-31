@@ -324,6 +324,61 @@ def run(plans, wger=None, verdicts=None, critic_raises=False, write=True):
 
 
 # ===========================================================================
+print("=== the wire schema stays shallow")
+
+# This is the whole point of the flat wire format, so it gets a regression guard.
+# A gateway rejected the previously-nested schema with
+#   503 {'code': 'chat_admission_busy', 'reason': 'structure_limit'}
+# while accepting depth-7 tool payloads from the same service.
+import json  # noqa: E402
+import routine_schema  # noqa: E402
+import tools as _tools  # noqa: E402
+
+drafting_depth = routine_schema.schema_depth(_tools.TOOL_DEFINITIONS)
+plan_depth = routine_schema.schema_depth(routine_schema.ROUTINE_PLAN_SCHEMA)
+check(f"drafting toolset depth {drafting_depth} <= 10 (was 18 when nested)",
+      drafting_depth <= 10, drafting_depth)
+check(f"plan schema depth {plan_depth} <= 7", plan_depth <= 7, plan_depth)
+check("no nested enum lists survive in the plan schema",
+      "enum" not in json.dumps(routine_schema.ROUTINE_PLAN_SCHEMA["properties"]["entries"]),
+      "an enum inside entries[] costs two levels of depth")
+check("the plan schema is flat: no slots array on the wire",
+      "slots" not in json.dumps(routine_schema.ROUTINE_PLAN_SCHEMA))
+
+
+print("=== a plan submitted in the flat wire shape runs the whole pipeline")
+
+def flat_equivalent(nested):
+    """Re-express a nested fixture in the shape the model now emits."""
+    flat = {k: v for k, v in nested.items() if k not in ("days", "progression")}
+    flat["progression_model"] = nested["progression"]["model"]
+    flat["progression_detail"] = nested["progression"]["detail"]
+    flat["days"] = [{"order": d["order"], "name": d["name"], "is_rest": d["is_rest"]}
+                    for d in nested["days"]]
+    flat["entries"] = [
+        {"day": d["order"], "slot": s["order"], **e}
+        for d in nested["days"]
+        for s in d.get("slots", [])
+        for e in s.get("entries", [])
+    ]
+    return flat
+
+
+wger = FakeWger()
+result, state = run([flat_equivalent(good_plan())], wger=wger)
+check("a flat plan is accepted", result.ok, result.error)
+check("it reached wger", result.routine_id == 777, result.error)
+written = wger.posts[0][1]
+check("the pipeline saw the nested shape after normalization",
+      "slots" in written["days"][0], list(written["days"][0]))
+check("no entries array leaked past normalization", "entries" not in written)
+check("day and slot keys stripped from the entries",
+      not ({"day", "slot"} & set(written["days"][0]["slots"][0]["entries"][0])),
+      written["days"][0]["slots"][0]["entries"][0])
+check("validation ran against the normalized plan", result.violations is not None)
+
+
+# ===========================================================================
 print("=== happy path")
 RECORDED["routines"].clear()
 RECORDED["reviews"].clear()

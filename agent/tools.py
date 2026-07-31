@@ -259,7 +259,12 @@ def dispatch(context: ToolContext, name: str, arguments: dict) -> Any:
     if name == "get_exercise_detail":
         return _get_exercise_detail(context, arguments)
     if name == "submit_routine_plan":
-        context.submitted_plan = arguments
+        # The model emits a flat wire shape (two arrays joined by a day number) because a
+        # deeply nested tool schema is rejected by some gateways as "structurally heavy".
+        # Expanding it here means the validator, the writer and everything that reads a
+        # stored payload keep the nested day -> slots -> entries structure they want, and
+        # only this one line knows both shapes exist.
+        context.submitted_plan = routine_schema.normalize_plan(arguments)
         return {"status": "received", "note": "plan queued for programming review"}
     if name == "propose_exercise_variation":
         # Validated against the real attribute vocabulary and persisted here rather than

@@ -2,7 +2,7 @@
 
 Takes about 45 minutes, most of it waiting on image pulls and the exercise import.
 
-**Steps 0-9 have been executed on a real TrueNAS SCALE box** (2026-07-30/31). The stack
+**Steps 0-10 have been executed on a real TrueNAS SCALE box** (2026-07-30/31). The stack
 came up and the exercise database is live: 3,242 exercises extracted from the spreadsheet
 (2,328 clean, 914 flagged), all described, loaded into the sidecar alongside wger's own
 872, and imported into wger with `linked == total` for both sources and zero skips. wger
@@ -14,10 +14,13 @@ dataset ACL (redis.conf, schema.sql, and the static/media directories), a missin
 PowerSync setup command, a mount path resolved against the wrong base directory, a
 placeholder API token sent as if real, and a step ordered before the token it needed.
 
-**Steps 10-13 have not been executed.** The two genuinely unproven things live there:
-whether your gateway does native tool calling (step 10), and whether wger's routine
-config-write semantics match my reading of its source (step 12). The checkpoints tell you
-what "working" looks like, so a failure is localized instead of mysterious.
+Step 10 passed: the gateway does native tool calling on all five roles, and structured
+outputs too. That closes the risk this document warned about most loudly.
+
+**Steps 11-13 have not been executed.** One genuinely unproven thing remains: whether
+wger's routine config-write semantics match my reading of its source (step 12). The
+checkpoints tell you what "working" looks like, so a failure is localized instead of
+mysterious.
 
 Replace `<base-path>` with your dataset base (e.g. `/mnt/Nas/Apps/fitness`) and `<nas-ip>`
 with your TrueNAS IP throughout. Step 6 generates a filled-in compose file for you.
@@ -447,7 +450,41 @@ writer in step 12 needs it.
 curl -s http://<nas-ip>:8100/capabilities | python3 -m json.tool
 ```
 
-You need `"ready": true` and `"native_tool_calling": true`.
+You need `"ready": true`, a `chat` role present, and `"native_tool_calling": true` on
+every role.
+
+**A worked example.** On one real OmniRoute instance (2026-07-31) the gateway advertised
+285 model ids across a dozen prefixes, and credentials turned out to be keyed *by prefix*:
+`anthropic/claude-sonnet-5` failed with `No active credentials for provider: anthropic`
+while `cc/claude-sonnet-5` worked. Effort variants (`-low`/`-medium`/`-high`/`-xhigh`) and
+`no-think/` variants existed for most Claude models. The config that passed:
+
+```yaml
+      MODEL_CHAT: cc/claude-sonnet-5
+      MODEL_ROUTINE: cc/claude-sonnet-5
+      MODEL_ROUTINE_ESCALATION: cc/claude-opus-5
+      MODEL_VARIATION: cc/claude-sonnet-5
+      MODEL_CRITIC: cc/claude-sonnet-5
+```
+
+All five reported `native_tool_calling: true` and `json_schema_response_format: true`, with
+no warnings. Your prefixes will differ — the point is that the prefix carries the
+credential, so probe before assuming.
+
+Probing candidates without a redeploy, which is faster than editing config and re-checking:
+
+```sh
+docker exec ix-fitness-agent-1 python -c "
+from llm import LLMClient
+for m in ['cc/claude-sonnet-5', 'claude/claude-sonnet-5']:
+    c = LLMClient(model=m).preflight().as_dict()
+    print(m, c['reachable'], c['native_tool_calling'])"
+```
+
+Also note `docker rmi` cannot delete an image while its container runs, and after the app
+is stopped the container no longer exists for `docker inspect` to resolve. Stop the app,
+then remove by name (`docker rmi ix-fitness-agent`), then Save the edited config — that
+rebuilds and starts in one step.
 
 OmniRoute classifies its upstream providers as `native`, `emulated`, or `none` — and
 `none` **silently drops the tools array**. If you see

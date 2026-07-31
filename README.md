@@ -89,7 +89,12 @@ construction. Individual exercises can be upgraded to AI-written coaching cues l
 
 ## Model routing
 
-OpenRouter model IDs and prices verified live on 2026-07-30:
+Model ids depend on your gateway. The table below is OpenRouter naming; a real OmniRoute
+instance keyed credentials by prefix and needed `cc/claude-sonnet-5` rather than
+`anthropic/claude-sonnet-5` (see `deploy/truenas/SETUP.md` step 10). `GET /capabilities`
+on the agent probes whatever you configure and proves tool calling actually happens.
+
+OpenRouter ids and prices verified live on 2026-07-30:
 
 | Job | Model | $/Mtok in / out |
 |---|---|---|

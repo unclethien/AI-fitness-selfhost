@@ -348,7 +348,25 @@ def main() -> None:
 #   agent     http://{args.ip}:{args.agent_port}
 #   gateway   http://{args.ip}:{args.gateway_port}/v1
 #
-# WGER_API_TOKEN is still a placeholder -- create it in setup step 8, then edit the app.
+# ===========================================================================
+# WHAT YOU STILL NEED TO CHANGE IN THIS FILE -- everything else is already set
+# ===========================================================================
+#
+#   1. agent -> WGER_API_TOKEN
+#      Still CHANGEME_wger_token. Register in wger at http://{args.ip}:{args.wger_port},
+#      generate a token at /en/user/api-key (setup step 8), paste it here, redeploy.
+#
+#   2. agent -> the four MODEL_* values
+#      Must match ids YOUR gateway actually advertises. Check with:
+#        curl -s http://{args.ip}:{args.gateway_port}/v1/models
+#      Do not assume OpenRouter's provider/model naming carries over.
+#
+#   3. agent -> LLM_API_KEY  (only if your gateway requires one)
+#      'local-gateway' is a placeholder that satisfies the OpenAI SDK, which insists on
+#      a non-empty key. Replace it only if your gateway checks it.
+#
+# NOT in this file: SECRET_KEY, SITE_URL, CSRF_TRUSTED_ORIGINS and TIME_ZONE live in
+# {wger_repo}/config/prod.env (setup step 5).
 """
     body = yaml.safe_dump(compose, sort_keys=False, default_flow_style=False, width=100)
     Path(args.output).write_text(header + body)

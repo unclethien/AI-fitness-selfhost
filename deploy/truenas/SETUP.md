@@ -304,30 +304,21 @@ docker exec -w /repo ix-fitness-agent-1 cat build/qc_report.md | head -40
 
 # 3. Load into the sidecar
 docker exec -w /repo ix-fitness-agent-1 python sidecar/load.py --custom
-
-# 4. Mirror wger's own 828 exercises into the same schema
-docker exec -w /repo ix-fitness-agent-1 python sidecar/load.py --wger --wger-url http://web:8000
 ```
 
 These run against the repo **bind mount** at `/repo`, not the code baked into the image,
 so a `git pull` takes effect without rebuilding. (The service code does not — see
 "Updating the agent" in step 6.)
 
-Step 4 needs no API token. wger's exercise endpoints are publicly readable, and the
-loader deliberately ignores a `CHANGEME_` placeholder rather than sending it: an invalid
-token gets a 401 from DRF instead of falling back to anonymous, which would fail this
-step for a reason that looks nothing like the cause.
+**Checkpoint:** step 1 prints `extracted 3242 exercises`; step 3 prints
+`upserted 3242 custom exercises` and a summary reading
+`ffed-2.9  3242 exercises  0 loggable in wger  3242 described`.
 
-**Checkpoint:** step 1 prints `extracted 3242 exercises`, and step 4's summary shows
-roughly 3,242 `ffed-2.9` plus 828 `wger-upstream`. Then:
+`0 loggable` is correct at this point — nothing is loggable until the wger import in
+step 9.
 
-```sh
-curl -s http://<nas-ip>:8100/health
-# {"status":"ok","exercises":4070}
-```
-
-A `degraded` status here means the agent cannot reach `sidecar-db` — check the password
-matches in both places in the compose file.
+Mirroring wger's own 828 exercises is **step 8**, not this step: it needs an API token,
+which does not exist until you have registered.
 
 ---
 
@@ -345,6 +336,34 @@ docker exec ix-fitness-agent-1 python -c "
 from wger_client import WgerClient; print(WgerClient().check_connection())"
 # {'ok': True, ...}
 ```
+
+### Now mirror wger's own exercises
+
+This needs the token, which is why it lives here rather than in step 7. `prod.env` ships
+`ALLOW_GUEST_USERS=False`, so wger answers an unauthenticated read of
+`/api/v2/exerciseinfo/` with **403** rather than serving it.
+
+```sh
+docker exec -w /repo ix-fitness-agent-1 python sidecar/load.py --wger --wger-url http://web:8000
+```
+
+If you would rather not redeploy first, pass the token directly instead — the loader
+prefers the flag over the environment:
+
+```sh
+docker exec -w /repo ix-fitness-agent-1 \
+  python sidecar/load.py --wger --wger-url http://web:8000 --wger-token <your-token>
+```
+
+**Checkpoint:** the summary shows roughly 3,242 `ffed-2.9` plus 828 `wger-upstream`.
+
+```sh
+curl -s http://<nas-ip>:8100/health
+# {"status":"ok","exercises":4070}
+```
+
+A `degraded` status means the agent cannot reach `sidecar-db` — check the password
+matches in both places in the compose file.
 
 ---
 
@@ -516,6 +535,7 @@ docker exec -i ix-fitness-web-1 python3 manage.py shell < wger_import/import_exe
 | Agent can't reach OmniRoute | Must be the NAS IP, not `http://omniroute:20128` — separate app, separate Docker network. Check OmniRoute's port is published on `0.0.0.0`. |
 | Import: "cannot reach the agent service" | Agent container down, or `AGENT_URL` wrong. Inside wger the hostname is `agent`, not `localhost`. |
 | Import: "no exercises this run has not already handled" | Link-back to the sidecar is failing. Check the agent's logs. |
+| `load.py --wger` fails with 403 | Expected before step 8. `ALLOW_GUEST_USERS=False` means wger refuses anonymous reads of the exercise API; the mirror needs a real token. |
 | Muscle names reported not found | Expected — ~12 muscles have no wger equivalent. Exercises still import. |
 | Routine generation times out | Normal on first run; several model calls plus ~100 wger writes. |
 | Chat answers but never searches or reads your profile | The gateway is dropping the tools array. Check `/capabilities` — a provider tiered `none` silently discards tools, so the coach answers from memory and looks like it is working. |

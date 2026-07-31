@@ -146,9 +146,10 @@ def usable_token(token: str | None) -> str | None:
     """None unless the token looks like a real one.
 
     The deployment ships `WGER_API_TOKEN` as a `CHANGEME_...` placeholder until the
-    account exists, and DRF answers an *invalid* token with 401 rather than falling
-    back to anonymous. Since wger's exercise endpoints are publicly readable, sending
-    the placeholder turns a step that would have worked into an auth error.
+    wger account exists. Sending it is strictly worse than sending nothing: DRF answers
+    an *invalid* token with 401, which reads as "your token is wrong" when the real
+    situation is "you have no token yet". Distinguishing the two is what lets the caller
+    print an accurate next step.
     """
     cleaned = (token or "").strip()
     if not cleaned or cleaned.upper().startswith("CHANGEME"):
@@ -163,13 +164,30 @@ def fetch_wger_exercises(base_url: str, token: str | None) -> list[dict]:
     if real_token:
         session.headers["Authorization"] = f"Token {real_token}"
     elif token:
-        print("note: WGER_API_TOKEN is still a placeholder; reading exercises "
-              "anonymously (they are public)")
+        # Not "they are public": a real deployment with ALLOW_GUEST_USERS=False answers
+        # an anonymous read with 403. Try it anyway rather than refusing, since a wger
+        # configured to allow it will work.
+        print("note: WGER_API_TOKEN is still a placeholder, so no token is being sent. "
+              "If wger requires authentication this will fail with 403.")
     url = f"{base_url.rstrip('/')}/api/v2/exerciseinfo/?format=json&limit=100"
     out: list[dict] = []
 
     while url:
         response = session.get(url, timeout=60)
+        if response.status_code in (401, 403):
+            # Observed on a real deployment: with ALLOW_GUEST_USERS=False, wger answers an
+            # unauthenticated read with 403 rather than serving it, so the mirror needs a
+            # token even though it only reads. A bare traceback here sends you looking at
+            # the network instead of at the token.
+            sys.exit(
+                f"error: wger returned {response.status_code} for {url}\n\n"
+                "  This deployment requires an authenticated request even to read\n"
+                "  exercises. Create a token first (wger -> API key), then either:\n"
+                "    - pass it directly:  --wger-token <token>\n"
+                "    - or set WGER_API_TOKEN in the app config and redeploy\n"
+                + ("\n  A token WAS sent but rejected — it is wrong or belongs to a\n"
+                   "  deleted user. Create a fresh one.\n" if real_token else "")
+            )
         response.raise_for_status()
         payload = response.json()
         for item in payload["results"]:

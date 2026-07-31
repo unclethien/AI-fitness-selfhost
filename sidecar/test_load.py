@@ -51,6 +51,57 @@ check("whitespace-only is None", usable_token("   ") is None)
 check("a real token containing 'changeme' later is kept",
       usable_token("abc123changeme") == "abc123changeme")
 
+print("\nan auth failure explains itself")
+
+import load  # noqa: E402
+
+
+class FakeResponse:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        raise AssertionError("raise_for_status should not be reached for 401/403")
+
+    def json(self):
+        raise AssertionError("json() should not be reached for 401/403")
+
+
+class FakeSession:
+    def __init__(self, status_code):
+        self.status_code = status_code
+        self.headers = {}
+
+    def get(self, url, timeout=None):
+        return FakeResponse(self.status_code)
+
+
+def attempt(status_code, token):
+    original = load.requests.Session
+    load.requests.Session = lambda: FakeSession(status_code)
+    try:
+        load.fetch_wger_exercises("http://web:8000", token)
+    except SystemExit as exc:
+        return str(exc)
+    else:
+        return None
+    finally:
+        load.requests.Session = original
+
+
+message = attempt(403, "CHANGEME_wger_token")
+check("403 exits instead of raising a traceback", message is not None)
+check("403 names the status", message and "403" in message)
+check("403 says how to fix it", message and "--wger-token" in message)
+check("403 with only a placeholder does not claim a token was rejected",
+      message and "WAS sent but rejected" not in message, message)
+
+message = attempt(401, "a-real-looking-token")
+check("401 is handled too", message and "401" in message)
+check("401 with a real token says the token itself is wrong",
+      message and "WAS sent but rejected" in message, message)
+
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: " + "; ".join(failures))

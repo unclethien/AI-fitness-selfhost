@@ -16,7 +16,10 @@ services:
       POSTGRES_DB: exercise_intel
       POSTGRES_USER: ${SIDECAR_DB_USER:-fitness}
       POSTGRES_PASSWORD: ${SIDECAR_DB_PASSWORD:?set SIDECAR_DB_PASSWORD in .env}
-      TZ: ${TZ:-UTC}
+      TZ: ${TZ:-America/Chicago}
+    # Postgres server timezone, not just the container OS: CURRENT_DATE drives the
+    # contraindication-expiry filter.
+    command: ["postgres", "-c", "timezone=${TZ:-America/Chicago}"]
     volumes:
       - sidecar-data:/var/lib/postgresql/data
       - ./sidecar/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -50,7 +53,7 @@ services:
       MODEL_ROUTINE_ESCALATION: ${MODEL_ROUTINE_ESCALATION:-anthropic/claude-opus-5}
       MODEL_VARIATION: ${MODEL_VARIATION:-anthropic/claude-sonnet-5}
       MODEL_CRITIC: ${MODEL_CRITIC:-anthropic/claude-sonnet-5}
-      TZ: ${TZ:-UTC}
+      TZ: ${TZ:-America/Chicago}
     ports:
       - "${AGENT_PORT:-8100}:8000"
     healthcheck:

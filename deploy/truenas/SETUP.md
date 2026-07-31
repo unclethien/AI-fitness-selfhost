@@ -98,12 +98,19 @@ Set these four:
 SECRET_KEY=<the string you just generated>
 SITE_URL=http://<nas-ip>:8080
 CSRF_TRUSTED_ORIGINS=http://<nas-ip>:8080
-TIME_ZONE=Asia/Ho_Chi_Minh     # and TZ= the same
+TIME_ZONE=America/Chicago
+TZ=America/Chicago
 ```
 
 `SITE_URL` and `CSRF_TRUSTED_ORIGINS` **must match the address you actually type in the
 browser**, including the port. If they don't, every form submission in wger fails with a
 CSRF error and nothing tells you why.
+
+`TIME_ZONE` and `TZ` must both be `America/Chicago`, and must match the `TZ` set on the
+`sidecar-db` and `agent` services in the compose file. This is not cosmetic: America/Chicago
+is UTC-5/-6, so a container left on UTC dates every workout logged after about 6pm
+local to the *next day*. Routine start dates and the recent-training lookback window
+both use the container's idea of today.
 
 Note the port is **8080, not 80** — TrueNAS's own web UI owns 80 and 443. The compose file
 remaps wger accordingly. Don't move the NAS UI instead; that risks locking you out.

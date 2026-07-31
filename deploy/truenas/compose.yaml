@@ -71,6 +71,14 @@ services:
   # Point wger's Postgres at a ZFS dataset so the database is covered by snapshots
   # and replication rather than living in an opaque Docker volume.
   db:
+    # wger hardcodes TZ=Europe/Berlin on this container, in BOTH its docker-compose.yml
+    # and services/postgres.yaml. An explicit `environment:` entry beats `env_file:`, so
+    # setting TZ in prod.env alone does NOT win -- it has to be overridden here. Kept as
+    # a list to match the form upstream uses, so the key merges cleanly.
+    environment:
+      - TZ=America/Chicago
+    # Deliberately NOT overriding `command:` -- upstream passes Postgres tuning flags
+    # (wal_level, shared_buffers, max_connections) there and replacing it would drop them.
     volumes: !override
       - /mnt/<pool>/apps/fitness/wger-postgres:/var/lib/postgresql/data
 
@@ -82,13 +90,21 @@ services:
   # --------------------------------------------------------------------------
   # AI layer
   # --------------------------------------------------------------------------
+  # Timezone is load-bearing, not cosmetic: America/Chicago is UTC-5/-6, so with a
+  # container on UTC every workout logged after ~6pm local is dated the NEXT day.
+  # Set it identically here, in the agent, and in wger's prod.env. Use the IANA name
+  # rather than a fixed offset so CST/CDT is handled.
   sidecar-db:
     image: docker.io/postgres:17-alpine
     environment:
       POSTGRES_DB: exercise_intel
       POSTGRES_USER: fitness
       POSTGRES_PASSWORD: CHANGEME_sidecar_password
-      TZ: UTC
+      TZ: America/Chicago
+    # Sets the Postgres server's own timezone, not just the container OS. CURRENT_DATE
+    # is what the contraindication-expiry filter compares against, so a UTC server would
+    # expire a restriction 5-6 hours early.
+    command: ["postgres", "-c", "timezone=America/Chicago"]
     volumes:
       - /mnt/<pool>/apps/fitness/sidecar-postgres:/var/lib/postgresql/data
       # Applied only on first init, when the data directory is empty.
@@ -132,7 +148,7 @@ services:
       MODEL_ROUTINE_ESCALATION: anthropic/claude-opus-5
       MODEL_VARIATION: anthropic/claude-sonnet-5
       MODEL_CRITIC: anthropic/claude-sonnet-5
-      TZ: UTC
+      TZ: America/Chicago
     volumes:
       # The repo is mounted read-write so the ETL can read the .xlsx and write its
       # output to build/, and so an edited mapping file takes effect without an image

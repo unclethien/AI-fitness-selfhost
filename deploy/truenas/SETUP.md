@@ -102,7 +102,7 @@ that creates every new file `770` — even files git would normally write as `64
 | File | Read by | If unreadable |
 |------|---------|---------------|
 | `config/redis.conf` | `redis`, UID 999 | `redis-server` exits immediately; Compose reports `cache-1 is unhealthy` and the whole stack refuses to come up |
-| `sidecar/schema.sql` | `postgres`, UID 999 | Schema never loads; every agent query fails on a missing table |
+| `sidecar/schema.sql` | `postgres`, UID 999 | Schema never loads — and `sidecar-db` still reports **healthy**, because the cluster is created before the init scripts run. Recovering needs the data directory emptied, not just a restart. |
 | `services/config-powersync/` | powersync's own user | powersync restart-loops |
 
 Ownership alone is not enough here: these run as 999, not 1000, so being owned by
@@ -470,7 +470,7 @@ docker exec -i "$WGER" python3 manage.py shell < wger_import/import_exercises.py
 | Container restart loop | Ownership (step 4). `docker logs <name> --tail 50`. |
 | `dependency failed to start: container ix-fitness-cache-1 is unhealthy` | `config/redis.conf` is not world-readable, so redis (UID 999) cannot read it and exits at once — note it fails in the same second it starts, rather than timing out. `chmod o+r` it (step 4). |
 | powersync: `password authentication failed for user "powersync_storage"` | The role is created by a management command, not by the compose file. Run `docker exec <web> ./manage.py setup-powersync-storage` (end of step 6), then restart the powersync container. Affects mobile offline sync only. |
-| Agent errors on a missing sidecar table | `sidecar/schema.sql` was unreadable at first start, so initdb skipped it. `chmod o+r` it, then wipe `sidecar-postgres` so initdb re-runs. |
+| `/health` says `UndefinedTable: relation "exercises" does not exist`, but `sidecar-db` is **healthy** | `schema.sql` was unreadable on first start. The entrypoint creates the cluster *before* running `/docker-entrypoint-initdb.d/*`, so it initialized, died on the unreadable script, restarted, found a populated data directory, and reported healthy with no tables — it never retries. `chmod o+r` the file (step 4), stop the app, `sudo find <base-path>/sidecar-postgres -mindepth 1 -delete`, start it again. |
 | CSRF error on any wger form | `SITE_URL` / `CSRF_TRUSTED_ORIGINS` don't match the URL you typed, including port. |
 | `Invalid YAML provided` on install | You pasted `compose.yaml` instead of `compose.generated.yaml`. The template contains Compose's `!override` tag, which TrueNAS's YAML parser rejects. Run `prepare.sh` and paste its output. |
 | App won't start, port conflict | nginx still on 80. Regenerate with `prepare.sh`; it asserts nginx is not on 80 before succeeding. |

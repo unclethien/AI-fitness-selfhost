@@ -129,20 +129,50 @@ if [ ! -f "$WGER_REPO/docker-compose.yml" ]; then
   Override the location with WGER_REPO=/path/to/wger if it lives elsewhere."
 fi
 
-command -v python3 >/dev/null 2>&1 || fail "python3 is required to generate the compose file"
+GENERATOR="$REPO_ROOT/deploy/truenas/generate_compose.py"
+[ -f "$GENERATOR" ] || fail "generator not found at $GENERATOR"
 
-python3 "$REPO_ROOT/deploy/truenas/generate_compose.py" \
-  --base-path "$BASE_PATH" \
-  --ip "$NAS_IP" \
-  --password "$PASSWORD" \
-  --timezone "$TIMEZONE" \
-  --wger-port "$WGER_PORT" \
-  --agent-port "$AGENT_PORT" \
-  --gateway-port "$GATEWAY_PORT" \
-  --wger-repo "$WGER_REPO" \
-  --repo "$AI_REPO" \
-  --output "$OUTPUT" \
-  || fail "generating the compose file failed"
+GEN_ARGS=(
+  --base-path "$BASE_PATH"
+  --ip "$NAS_IP"
+  --password "$PASSWORD"
+  --timezone "$TIMEZONE"
+  --wger-port "$WGER_PORT"
+  --agent-port "$AGENT_PORT"
+  --gateway-port "$GATEWAY_PORT"
+  --wger-repo "$WGER_REPO"
+  --repo "$AI_REPO"
+  --output "$OUTPUT"
+)
+
+# The generator needs PyYAML to parse wger's compose. TrueNAS's host python may not have
+# it, and pip-installing on the host does not survive an OS upgrade -- so fall back to a
+# throwaway container. Host paths are mounted at the SAME absolute paths inside it, which
+# matters because the generator resolves and existence-checks those paths.
+if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" >/dev/null 2>&1; then
+  info "generating with host python3"
+  python3 "$GENERATOR" "${GEN_ARGS[@]}" || fail "generating the compose file failed"
+elif command -v docker >/dev/null 2>&1; then
+  info "host python3 lacks PyYAML; generating inside a throwaway container"
+  DOCKER_MOUNTS=(-v "/mnt:/mnt")
+  case "$REPO_ROOT" in
+    /mnt/*) ;;
+    *) DOCKER_MOUNTS+=(-v "$REPO_ROOT:$REPO_ROOT") ;;
+  esac
+  case "$WGER_REPO" in
+    /mnt/*) ;;
+    *) DOCKER_MOUNTS+=(-v "$WGER_REPO:$WGER_REPO") ;;
+  esac
+  docker run --rm "${DOCKER_MOUNTS[@]}" -w "$REPO_ROOT" \
+    docker.io/python:3.12-slim \
+    sh -c "pip install --quiet --no-cache-dir pyyaml && python3 '$GENERATOR' $(printf "'%s' " "${GEN_ARGS[@]}")" \
+    || fail "generating the compose file inside a container failed"
+else
+  fail "need either python3 with PyYAML, or docker.
+
+  On TrueNAS, docker is present, so this should not happen. Otherwise:
+    pip install --user pyyaml"
+fi
 
 # --- validate --------------------------------------------------------------------
 problems=0

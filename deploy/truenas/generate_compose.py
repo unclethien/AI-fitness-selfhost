@@ -137,6 +137,75 @@ def absolutize_service(service: dict, source_file: Path) -> dict:
     return service
 
 
+def host_paths(services: dict) -> list[tuple[str, str, str]]:
+    """Every absolute host path the compose file references, as (service, key, path)."""
+    found: list[tuple[str, str, str]] = []
+    for name, service in services.items():
+        env_file = service.get("env_file")
+        for entry in ([env_file] if isinstance(env_file, str) else (env_file or [])):
+            if isinstance(entry, str) and entry.startswith("/"):
+                found.append((name, "env_file", entry))
+        for entry in service.get("volumes") or []:
+            if isinstance(entry, str):
+                source = entry.split(":")[0]
+                if source.startswith("/"):
+                    found.append((name, "volumes", source))
+        build = service.get("build")
+        context = build if isinstance(build, str) else (build or {}).get("context")
+        if isinstance(context, str) and context.startswith("/"):
+            found.append((name, "build.context", context))
+    return found
+
+
+def verify_host_paths(services: dict, expected_roots: list[Path]) -> None:
+    """Refuse to emit a compose file that references paths which do not exist.
+
+    This is the check that would have caught a file generated on a different machine:
+    TrueNAS reports it as `env file ... not found`, at install time, after a confusing
+    round trip. Failing here instead names the problem where it can be fixed.
+
+    Also catches datasets that have not been created yet (setup step 1), which otherwise
+    surface as a container that starts and immediately dies.
+    """
+    missing: list[tuple[str, str, str]] = []
+    outside: list[tuple[str, str, str]] = []
+
+    for service, key, path in host_paths(services):
+        candidate = Path(path)
+        if not candidate.exists():
+            missing.append((service, key, path))
+        if not any(
+            candidate == root or root in candidate.parents for root in expected_roots
+        ):
+            outside.append((service, key, path))
+
+    if outside:
+        print("error: these paths fall outside the expected directories", file=sys.stderr)
+        print(f"  expected under: {', '.join(str(r) for r in expected_roots)}",
+              file=sys.stderr)
+        for service, key, path in outside:
+            print(f"    {service}.{key}: {path}", file=sys.stderr)
+        print(
+            "\n  This usually means the file is being generated on a different machine\n"
+            "  than it will run on. Run prepare.sh ON the TrueNAS box.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if missing:
+        print("error: these referenced paths do not exist", file=sys.stderr)
+        for service, key, path in missing:
+            print(f"    {service}.{key}: {path}", file=sys.stderr)
+        datasets = [p for _, _, p in missing if "/repo/" not in p]
+        if datasets:
+            print(
+                "\n  Paths that are not inside the repo are datasets — create them first\n"
+                "  (setup step 1), then re-run.",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
+
 def used_named_volumes(services: dict) -> set[str]:
     """Named volumes still referenced, after bind mounts replaced several."""
     used: set[str] = set()
@@ -163,6 +232,7 @@ def build_compose(
     agent_port: int,
     gateway_port: int,
     app_name: str,
+    verify_paths: bool = True,
 ) -> dict:
     compose_path = wger_repo / "docker-compose.yml"
     if not compose_path.exists():
@@ -279,6 +349,10 @@ def build_compose(
         "restart": "unless-stopped",
     }
 
+    # --- refuse to emit something that cannot possibly work ------------------
+    if verify_paths:
+        verify_host_paths(services, expected_roots=[base_path, wger_repo, repo])
+
     # --- top level -----------------------------------------------------------
     compose: dict = {"name": app_name, "services": services}
 
@@ -315,6 +389,11 @@ def main() -> None:
     parser.add_argument("--repo", default=None,
                        help="default <base-path>/repo/ai-fitness")
     parser.add_argument("-o", "--output", required=True)
+    parser.add_argument(
+        "--no-verify-paths", action="store_true",
+        help="skip the check that referenced paths exist. Only for inspecting output on "
+             "a machine that is not the deployment target -- the result will NOT install.",
+    )
     args = parser.parse_args()
 
     base_path = Path(args.base_path.rstrip("/"))
@@ -332,6 +411,7 @@ def main() -> None:
         agent_port=args.agent_port,
         gateway_port=args.gateway_port,
         app_name=args.app_name,
+        verify_paths=not args.no_verify_paths,
     )
 
     header = f"""\
@@ -370,6 +450,9 @@ def main() -> None:
 """
     body = yaml.safe_dump(compose, sort_keys=False, default_flow_style=False, width=100)
     Path(args.output).write_text(header + body)
+    if args.no_verify_paths:
+        print("   WARNING: path verification skipped -- this file is for inspection "
+              "only and will not install")
     print(f"   services: {', '.join(sorted(compose['services']))}")
     if compose.get("volumes"):
         print(f"   named volumes kept: {', '.join(sorted(compose['volumes']))}")
